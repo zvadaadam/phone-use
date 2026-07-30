@@ -1,0 +1,10 @@
+node_modules/
+native/.build/
+dist/
+.swiftpm/
+.build/
+.env
+.env.*
+coverage/
+.DS_Store
+*.log

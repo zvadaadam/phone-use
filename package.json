@@ -1,0 +1,28 @@
+{
+  "name": "mirror-relay",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "description": "Local authenticated bridge for observing and controlling a locked iPhone through Apple iPhone Mirroring.",
+  "scripts": {
+    "build:native": "swift build -c release --package-path native",
+    "package:app": "zsh scripts/package-app.sh",
+    "open:app": "open 'dist/Mirror Relay.app'",
+    "relay": "zsh scripts/mirror-relayctl",
+    "permissions": "native/.build/release/mirror-bridge --request-permissions",
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "npm run test:node && npm run test:native",
+    "test:node": "node --test",
+    "test:native": "swift test --package-path native",
+    "test:smoke": "zsh scripts/smoke-test.sh",
+    "test:wda-contract": "zsh scripts/wda-contract-smoke.sh",
+    "doctor:wda": "zsh scripts/wda-doctor.sh"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
