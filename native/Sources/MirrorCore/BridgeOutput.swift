@@ -30,12 +30,13 @@ public struct BridgeStatus: Codable, Sendable {
 
 public protocol BridgeOutput: AnyObject {
     func frame(_ data: Data)
+    func clearFrame()
     func status(_ status: BridgeStatus)
     func log(_ message: String)
 }
 
-public extension BridgeOutput {
-    func status(
+extension BridgeOutput {
+    public func status(
         phase: String,
         message: String,
         width: Int? = nil,

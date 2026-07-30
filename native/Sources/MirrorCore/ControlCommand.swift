@@ -2,7 +2,6 @@ import Foundation
 
 public struct ControlCommand: Codable, Sendable {
     public let type: String
-    public let phase: String?
     public let x: Double?
     public let y: Double?
     public let x2: Double?
@@ -13,7 +12,6 @@ public struct ControlCommand: Codable, Sendable {
 
     public init(
         type: String,
-        phase: String? = nil,
         x: Double? = nil,
         y: Double? = nil,
         x2: Double? = nil,
@@ -23,7 +21,6 @@ public struct ControlCommand: Codable, Sendable {
         name: String? = nil
     ) {
         self.type = type
-        self.phase = phase
         self.x = x
         self.y = y
         self.x2 = x2
@@ -35,17 +32,12 @@ public struct ControlCommand: Codable, Sendable {
 
     public func validated() throws -> ControlCommand {
         switch type {
-        case "pointer":
-            guard let phase, ["down", "move", "up"].contains(phase) else {
-                throw ControlError("Pointer phase must be down, move, or up")
-            }
-            try validatePoint(x: x, y: y)
         case "tap":
             try validatePoint(x: x, y: y)
         case "swipe":
             try validatePoint(x: x, y: y)
             try validatePoint(x: x2, y: y2)
-            if let durationMs, !(100 ... 3_000).contains(durationMs) {
+            if let durationMs, !(100...3_000).contains(durationMs) {
                 throw ControlError("Swipe duration must be between 100 and 3000 milliseconds")
             }
         case "type":
@@ -67,9 +59,9 @@ public struct ControlCommand: Codable, Sendable {
 
     private func validatePoint(x: Double?, y: Double?) throws {
         guard let x, let y,
-              x.isFinite, y.isFinite,
-              (0 ... 1).contains(x),
-              (0 ... 1).contains(y)
+            x.isFinite, y.isFinite,
+            (0...1).contains(x),
+            (0...1).contains(y)
         else {
             throw ControlError("Coordinates must be numbers between 0 and 1")
         }

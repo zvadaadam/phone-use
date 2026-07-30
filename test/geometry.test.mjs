@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { containedFrame } from "../public/geometry.js";
+import { containedFrame, gestureCommand } from "../public/geometry.js";
 
 test("containedFrame removes vertical letterboxing", () => {
   assert.deepEqual(
@@ -19,5 +19,26 @@ test("containedFrame removes horizontal letterboxing", () => {
       { width: 200, height: 100 },
     ),
     { left: 60, top: 20, width: 400, height: 200 },
+  );
+});
+
+test("gestureCommand emits one atomic tap for a short gesture", () => {
+  assert.deepEqual(
+    gestureCommand({ x: 0.2, y: 0.3 }, { x: 0.205, y: 0.304 }, 20),
+    { type: "tap", x: 0.205, y: 0.304 },
+  );
+});
+
+test("gestureCommand emits one bounded atomic swipe", () => {
+  assert.deepEqual(
+    gestureCommand({ x: 0.5, y: 0.8 }, { x: 0.5, y: 0.2 }, 5_000),
+    {
+      type: "swipe",
+      x: 0.5,
+      y: 0.8,
+      x2: 0.5,
+      y2: 0.2,
+      durationMs: 3_000,
+    },
   );
 });

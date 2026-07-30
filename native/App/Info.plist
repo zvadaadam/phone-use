@@ -17,15 +17,19 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-	<string>0.5.0</string>
+  <string>0.6.0</string>
   <key>CFBundleVersion</key>
-	<string>6</string>
+  <string>7</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key>
   <string>15.0</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026 Adam Zvada. All rights reserved.</string>
   <key>NSScreenCaptureUsageDescription</key>
   <string>Mirror Relay captures only Apple’s iPhone Mirroring window so authorized local agents can observe and control your iPhone.</string>
 </dict>

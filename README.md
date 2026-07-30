@@ -1,118 +1,81 @@
 # Mirror Relay
 
-Mirror Relay is a local Mac broker that lets authorized local AI agents observe
-and control a real iPhone through Apple's iPhone Mirroring app.
-
-Version 0.5 makes iPhone Mirroring the default transport:
+Mirror Relay is a local macOS broker that lets authorized agents observe and
+control a real, powered-on iPhone through Apple’s iPhone Mirroring app.
 
 ```text
-local agent / browser dashboard
-        ↕ authenticated HTTP on 127.0.0.1:8747
-Mirror Relay menu-bar + login-item app
-        ↕ JPEG window capture + HID-level macOS input
+agent CLI / authenticated dashboard
+        ↕ HTTP on 127.0.0.1:8747
+Mirror Relay menu-bar app
+        ↕ window-only capture + verified HID input
 Apple iPhone Mirroring
-        ↕ Apple's private Continuity connection
-powered-on, nearby, locked iPhone
+        ↕ Apple Continuity
+nearby, powered-on, locked iPhone
 ```
 
-The browser does not embed Apple's native window. Mirror Relay captures that
-window, converts it to a JPEG stream, and maps normalized browser/API
-coordinates back to global Mac coordinates. It activates iPhone Mirroring and
-posts the same HID-level mouse, scroll, and keyboard events that physical input
-uses.
+The browser does not embed Apple’s private UI and Mirror Relay does not patch or
+inject into Apple processes. It captures the authorized iPhone Mirroring window
+as JPEG frames, maps normalized coordinates to that window, verifies the target
+before every input event, and posts ordinary macOS HID events.
 
-## What this can and cannot do
+## Product boundary
 
-It can:
+Mirror Relay can:
 
-- launch iPhone Mirroring on demand;
-- observe its current window through `/api/observe` or `/stream.mjpeg`;
-- tap pixels, drag, perform trackpad-style swipes, and send text;
-- invoke Home, App Switcher, and Spotlight;
-- close the Mirroring session when the agent is finished;
-- start automatically at Mac login and remain local to this Mac.
+- open and close Apple iPhone Mirroring on demand;
+- stream the visible iPhone screen to a local authenticated dashboard;
+- return an individual JPEG frame to an agent;
+- tap, swipe, type, and invoke Home, App Switcher, or Spotlight;
+- start at Mac login and remain available as a menu-bar app.
 
 It cannot:
 
-- operate a powered-off iPhone;
-- bypass the iPhone passcode, Apple Account, region, or Continuity checks;
-- expose the phone's semantic accessibility tree through Apple Mirroring;
-- guarantee compatibility with future macOS releases, because iPhone Mirroring
-  has no public automation SDK.
+- operate a powered-off or distant iPhone;
+- bypass a passcode, Apple Account, region, or Continuity requirement;
+- expose a semantic iOS accessibility tree;
+- guarantee compatibility with future macOS releases because Apple publishes no
+  iPhone Mirroring automation SDK.
 
-The iPhone must be powered on, nearby, and locked. Apple's first connection may
-require the phone to have been recently unlocked. Wi-Fi and Bluetooth must be
-enabled and Apple's normal iPhone Mirroring prerequisites still apply.
+The iPhone must be powered on, nearby, and locked. Apple’s first connection or
+recovery flow may require the phone to have been unlocked recently. Wi-Fi,
+Bluetooth, and Apple’s normal iPhone Mirroring prerequisites still apply.
 
-## Why the capture implementation changed
-
-The first implementation used a `SCStream` directly against the Mirroring
-window. On this Mac that path returned suspended samples, and an early
-`screencapture` probe appeared blank. A deeper audit of
-[`jfarcand/mirroir-mcp`](https://github.com/jfarcand/mirroir-mcp) showed the
-working distinction:
-
-- use Accessibility and the WindowServer only to locate and classify the
-  Mirroring window;
-- acquire each frame through the macOS `screencapture` service, trying window
-  ID first and an exact screen-region fallback second;
-- post pointing events at the global HID tap, not directly to the app PID;
-- model an iPhone swipe as a phased, continuous scroll gesture rather than a
-  mouse drag.
-
-Mirror Relay 0.5 now follows that architecture behind its existing API.
-WebDriverAgent remains an explicit fallback for cases that need a semantic
-accessibility tree. The repository comparison is in
-[RESEARCH.md](RESEARCH.md), and the evidence/limitations are in
-[FEASIBILITY.md](FEASIBILITY.md).
-
-On the development Mac, the exact installed app completed the full physical
-device loop: open the locked iPhone, capture live 708×1562 frames, tap the
-ChatGPT icon by normalized coordinates, observe the app open, perform a phased
-swipe, and close iPhone Mirroring cleanly.
-
-## One-time setup
-
-1. Set up Apple's iPhone Mirroring normally and confirm it can connect to the
-   locked iPhone.
-2. Install and open `Mirror Relay.app`.
-3. Grant the exact installed app:
-   - **Privacy & Security → Screen & System Audio Recording**
-   - **Privacy & Security → Accessibility**
-4. Relaunch Mirror Relay after changing either permission.
-
-The app requests missing permissions on first launch. Ad-hoc local builds need
-the grants refreshed when their code hash changes. Use a stable Apple
-Development or Developer ID identity to preserve permissions across rebuilds
-and for distribution.
-
-The EU eligibility enabler is not part of Mirror Relay. If iPhone Mirroring
-already opens and connects, do not modify the system eligibility database.
-
-## Build, package, and test
+## Install and one-time setup
 
 Requirements:
 
 - macOS 15 or newer;
-- Xcode and its command-line tools;
-- Node.js 20 or newer for the dashboard tests and legacy development relay.
+- Apple iPhone Mirroring already paired with the iPhone;
+- Xcode command-line tools for source builds;
+- Node.js 20 or newer for tests and packaging.
+
+Build the local app:
 
 ```sh
-npm test
-npm run test:wda-contract
-npm run package:app
+npm install
+npm run check
 ```
 
-The packaged app is `dist/Mirror Relay.app`.
+Copy `dist/Mirror Relay.app` to `/Applications`, open it, and grant the exact
+installed app:
 
-Tests cover eight Node contracts, eighteen native command/capture/WDA contracts,
-and a full isolated broker/WebDriverAgent fallback lifecycle.
+- **Privacy & Security → Screen & System Audio Recording**
+- **Privacy & Security → Accessibility**
+
+Relaunch Mirror Relay after changing either permission. Ad-hoc local builds can
+need their grants refreshed when the binary changes. A Developer ID-signed
+release preserves a stable signing identity.
+
+The EU eligibility enabler is not part of Mirror Relay. If Apple’s app already
+connects, do not modify the macOS eligibility database.
 
 ## Agent CLI
 
-Agents should use the wrapper instead of reading or handling the bearer token:
+Use the wrapper so agents never read or handle the bearer token directly:
 
 ```sh
+./scripts/mirror-relayctl dashboard
+./scripts/mirror-relayctl doctor
 ./scripts/mirror-relayctl status
 ./scripts/mirror-relayctl open
 ./scripts/mirror-relayctl observe /tmp/iphone.jpg
@@ -123,89 +86,113 @@ Agents should use the wrapper instead of reading or handling the bearer token:
 ./scripts/mirror-relayctl apps
 ./scripts/mirror-relayctl spotlight
 ./scripts/mirror-relayctl close
+./scripts/mirror-relayctl version
 ```
 
-Coordinates are normalized from `0` to `1` over the captured Mirroring window.
-An action response reports the frame IDs before and after the command and
-whether the observed image changed.
+Coordinates are normalized from `0` to `1`. Tap and swipe are atomic commands;
+the broker serializes all open, control, and close operations. Action responses
+include frame IDs and whether a fresh frame changed after the command.
 
-The wrapper prefers `/Applications/Mirror Relay.app`, then the locally packaged
-app. The npm equivalent is:
-
-```sh
-npm run relay -- status
-```
+`npm start` opens the authenticated dashboard through the installed CLI.
 
 ## Local API
 
-Mirror Relay listens only on `127.0.0.1:8747`. Its random 256-bit token is
-stored with mode `0600` under:
+Mirror Relay listens only on `127.0.0.1:8747`. Its 256-bit agent bearer token is
+stored in a `0700` directory with `0600` file permissions:
 
 ```text
 ~/Library/Application Support/Mirror Relay/token
 ```
 
-`/health` is the only unauthenticated endpoint.
+`/health` and static dashboard assets are public to the local Mac. Phone data
+and mutation routes require authentication.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Liveness, selected transport, and permission summary |
-| `GET` | `/api/status` | Phase, frame rate, dimensions, and recent logs |
-| `GET` | `/api/observe` | Latest JPEG plus `X-Frame-ID` |
-| `GET` | `/api/source` | JSON accessibility tree on the WDA fallback; `409` on Mirroring |
+| `GET` | `/health` | Broker liveness and permission summary |
+| `GET` | `/api/status` | Phase, frame age, dimensions, and recent logs |
+| `GET` | `/api/observe` | Fresh JPEG plus `X-Frame-ID` |
 | `GET` | `/stream.mjpeg` | Live multipart JPEG stream |
-| `POST` | `/api/session/open` | Launch/connect and wait for a live locked-iPhone session |
-| `POST` | `/api/session/close` | Close iPhone Mirroring or the fallback session |
-| `POST` | `/api/act` | Validate and deliver a control command |
+| `POST` | `/api/session/open` | Open and wait for a live session |
+| `POST` | `/api/session/close` | Close Mirroring and clear the cached frame |
+| `POST` | `/api/act` | Deliver a validated atomic control command |
+| `POST` | `/api/dashboard/bootstrap` | Create a one-time dashboard link |
 
-Example actions:
+The CLI authenticates with the bearer token. The browser never receives that
+long-lived token: a single-use, 60-second bootstrap link is exchanged for an
+eight-hour, in-memory, HttpOnly, SameSite-strict session cookie. Bootstrap links
+cannot be replayed and dashboard sessions disappear when Mirror Relay quits.
 
-```json
-{"type":"tap","x":0.5,"y":0.72}
-{"type":"swipe","x":0.5,"y":0.8,"x2":0.5,"y2":0.2,"durationMs":350}
-{"type":"type","text":"hello"}
-{"type":"shortcut","name":"home"}
-```
+## Security and privacy model
 
-Open the dashboard from the app's menu so its one-time URL token is supplied
-and then removed from the visible address bar.
+- The broker binds only to IPv4 loopback and uses Network.framework’s
+  local-only mode.
+- Observation and control endpoints require a bearer token or dashboard
+  session.
+- Browser mutations reject cross-origin requests.
+- Commands are bounded and validated, and mutations run in FIFO order.
+- Pointer gestures are sent as one tap or swipe instead of interleaved phases.
+- Input revalidates the target PID, window ID, bounds, frontmost application,
+  and topmost window before every event and throughout a swipe.
+- Capture is window-only and fails closed; it never falls back to a screen
+  region that could contain unrelated Mac windows.
+- Closing or losing the session clears the cached frame, and observations older
+  than three seconds are rejected.
+- No LAN listener, cloud relay, passcode handling, jailbreak, private
+  entitlement injection, or WebDriverAgent server is included.
 
-## WebDriverAgent fallback
+Apple’s `screencapture` service requires a file destination. Each source frame
+therefore exists briefly as a PNG inside a per-user `0700` scratch directory,
+is set to `0600`, converted to JPEG in memory, and deleted immediately. Stale
+scratch files are scrubbed at startup. Mirror Relay does not retain frames,
+typed text, or interaction history. An explicit CLI `observe` command writes
+the requested JPEG to the caller’s chosen path.
 
-Select the USB/XCUITest transport explicitly:
+Anyone controlling this macOS account and able to invoke the CLI can operate the
+paired phone. Do not proxy or tunnel port 8747.
+
+## Tests
 
 ```sh
-MIRROR_RELAY_TRANSPORT="webdriveragent" \
-  open "dist/Mirror Relay.app"
+npm test                 # Node, Swift, and isolated broker integration
+npm run test:smoke       # exact installed app
+npm run check            # tests, warnings-as-errors release build, package
 ```
 
-It requires the normal real-device preparation: USB pairing, Developer Mode,
-Xcode signing, and an unlocked phone during automation. It supplies screenshots,
-deterministic input, and the semantic `/api/source` tree. Test it without a
-physical device using:
+The integration test verifies loopback binding, bearer authentication,
+single-use dashboard exchange, hardened cookies, origin rejection, validation,
+and token permissions. Native tests cover command validation, operation
+serialization, capture commands, and Mirroring-window selection.
+
+## Release packaging
+
+`npm run package:app` produces an ad-hoc signed local-development app.
+
+A distributable build must use Apple Developer credentials:
 
 ```sh
-npm run test:wda-contract
+export MIRROR_RELAY_SIGN_IDENTITY="Developer ID Application: …"
+export MIRROR_RELAY_NOTARY_PROFILE="mirror-relay-notary"
+npm run package:release
 ```
 
-## Security model
-
-- The broker binds only to IPv4 loopback.
-- Observation and control endpoints require the random local bearer token.
-- Frames, typed text, and interaction history are not persisted.
-- Commands are size- and range-validated.
-- Closing iPhone Mirroring ends the native input route.
-- There is no LAN listener, cloud relay, passcode handling, jailbreak, or
-  private-entitlement injection.
-
-Anyone who controls this macOS account and can read the token can operate the
-Mirroring session. Do not expose port 8747 through a proxy or tunnel.
+The release command signs nested executables, submits the archive to Apple
+notary service, staples and validates the ticket, checks Gatekeeper acceptance,
+and creates `dist/Mirror Relay-<version>.zip`. It fails closed when either
+credential is missing.
 
 ## Source layout
 
-- `native/Sources/MirrorCore` — window capture, input, command model, and WDA client.
-- `native/Sources/MirrorRelayApp` — menu-bar app, transports, state, token, and API.
-- `native/Sources/MirrorRelayCLI` — agent-facing client and background app launch.
-- `public` — bundled local dashboard.
-- `scripts/wda-contract-smoke.sh` — isolated fallback lifecycle test.
-- `src` — legacy Node development relay.
+- `native/Sources/MirrorCore` — capture, verified input, commands, and FIFO lock.
+- `native/Sources/MirrorRelayApp` — menu-bar lifecycle, broker state, auth, and
+  local HTTP server.
+- `native/Sources/MirrorRelayCLI` — token-hiding agent CLI.
+- `native/Tests` — native behavior and concurrency tests.
+- `public` — authenticated local dashboard.
+- `scripts` — packaging, release, integration, and installed-app smoke checks.
+- `test` — browser geometry tests.
+
+The repository comparison and platform evidence are documented in
+[RESEARCH.md](RESEARCH.md) and [FEASIBILITY.md](FEASIBILITY.md). Release history,
+privacy details, and the security boundary live in [CHANGELOG.md](CHANGELOG.md),
+[PRIVACY.md](PRIVACY.md), and [SECURITY.md](SECURITY.md).

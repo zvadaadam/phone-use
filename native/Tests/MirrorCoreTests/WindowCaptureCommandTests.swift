@@ -1,29 +1,16 @@
 import CoreGraphics
 import XCTest
+
 @testable import MirrorCore
 
 final class WindowCaptureCommandTests: XCTestCase {
     func testBuildsWindowCaptureArguments() {
         XCTAssertEqual(
             WindowCaptureCommand.arguments(
-                mode: .window,
                 windowID: 42,
-                bounds: CGRect(x: 10, y: 20, width: 300, height: 600),
                 outputPath: "/tmp/frame.png"
             ),
             ["-l", "42", "-x", "-o", "/tmp/frame.png"]
-        )
-    }
-
-    func testBuildsRegionFallbackArgumentsAcrossDisplays() {
-        XCTAssertEqual(
-            WindowCaptureCommand.arguments(
-                mode: .region,
-                windowID: 42,
-                bounds: CGRect(x: -900, y: 12, width: 312.4, height: 655.6),
-                outputPath: "/tmp/frame.png"
-            ),
-            ["-R", "-900,12,312,656", "-x", "-o", "/tmp/frame.png"]
         )
     }
 

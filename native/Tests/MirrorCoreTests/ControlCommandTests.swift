@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import MirrorCore
 
 final class ControlCommandTests: XCTestCase {
@@ -30,6 +31,12 @@ final class ControlCommandTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try ControlCommand(type: "shortcut", name: "power").validated()
+        )
+    }
+
+    func testRejectsLegacyPointerPhases() {
+        XCTAssertThrowsError(
+            try ControlCommand(type: "pointer", x: 0.5, y: 0.5).validated()
         )
     }
 }

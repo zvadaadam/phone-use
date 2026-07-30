@@ -1,4 +1,4 @@
-import { containedFrame } from "./geometry.js";
+import { containedFrame, gestureCommand } from "./geometry.js";
 
 const elements = {
   body: document.body,
@@ -12,6 +12,7 @@ const elements = {
   stream: document.querySelector("#stream"),
   screenInput: document.querySelector("#screen-input"),
   restart: document.querySelector("#restart-button"),
+  close: document.querySelector("#close-session"),
   text: document.querySelector("#text-input"),
   sendText: document.querySelector("#send-text"),
   log: document.querySelector("#event-log"),
@@ -19,127 +20,168 @@ const elements = {
   latency: document.querySelector("#latency-label"),
 };
 
-const token = new URLSearchParams(location.search).get("token") || "";
-const authQuery = token ? `?token=${encodeURIComponent(token)}` : "";
 let statusTimer;
-let pendingMove;
-let pointerActive = false;
+let gesture;
 let captureSize = null;
+let authorizationReported = false;
 
-if (token) history.replaceState({}, "", "/");
-elements.stream.src = `/stream.mjpeg${authQuery}`;
 connect();
 
 elements.restart.addEventListener("click", async () => {
-  await post("/api/session/open");
-  addLog("Opening iPhone session");
+  await runButtonAction(elements.restart, async () => {
+    await post("/api/session/open");
+    addLog("iPhone session opened");
+  });
+});
+
+elements.close.addEventListener("click", async () => {
+  await runButtonAction(elements.close, async () => {
+    await post("/api/session/close");
+    addLog("iPhone session closed");
+  });
 });
 
 document.querySelectorAll("[data-shortcut]").forEach((button) => {
-  button.addEventListener("click", () => {
-    send({ type: "shortcut", name: button.dataset.shortcut });
-    addLog(`${button.textContent.trim()} command sent`);
+  button.addEventListener("click", async () => {
+    await runButtonAction(button, async () => {
+      await send({ type: "shortcut", name: button.dataset.shortcut });
+      addLog(`${button.textContent.trim()} command completed`);
+    });
   });
 });
 
 elements.sendText.addEventListener("click", submitText);
 elements.text.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") submitText();
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void submitText();
 });
 elements.clearLog.addEventListener("click", () => {
   elements.log.replaceChildren();
 });
 
 elements.screenInput.addEventListener("pointerdown", (event) => {
-  if (!sendPointer("down", event)) return;
-  pointerActive = true;
+  const point = normalizedPoint(event);
+  if (!point) return;
+  gesture = {
+    pointerId: event.pointerId,
+    start: point,
+    end: point,
+    startedAt: performance.now(),
+  };
   elements.screenInput.setPointerCapture(event.pointerId);
 });
 elements.screenInput.addEventListener("pointermove", (event) => {
-  if (!pointerActive) return;
-  pendingMove = event;
-  if (!elements.screenInput.dataset.moveScheduled) {
-    elements.screenInput.dataset.moveScheduled = "true";
-    requestAnimationFrame(() => {
-      if (pendingMove) sendPointer("move", pendingMove);
-      pendingMove = null;
-      delete elements.screenInput.dataset.moveScheduled;
-    });
-  }
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  const point = normalizedPoint(event, true);
+  if (point) gesture.end = point;
 });
-elements.screenInput.addEventListener("pointerup", finishPointer);
-elements.screenInput.addEventListener("pointercancel", finishPointer);
+elements.screenInput.addEventListener("pointerup", (event) => {
+  void finishGesture(event);
+});
+elements.screenInput.addEventListener("pointercancel", cancelGesture);
 elements.screenInput.addEventListener("contextmenu", (event) => event.preventDefault());
 
 function connect() {
   clearInterval(statusTimer);
-  if (!token) {
-    document.querySelector('[data-step="browser"]').dataset.ready = "false";
-    addLog("Open this dashboard from the Mirror Relay menu to authorize it");
-    return;
-  }
   pollStatus();
   statusTimer = setInterval(pollStatus, 1_000);
 }
 
 async function pollStatus() {
   try {
-    const response = await fetch(`/api/status${authQuery}`, { cache: "no-store" });
+    const response = await fetch("/api/status", { cache: "no-store" });
     if (!response.ok) throw new Error(`Status ${response.status}`);
     updateStatus(await response.json());
+    authorizationReported = false;
     document.querySelector('[data-step="browser"]').dataset.ready = "true";
-  } catch {
+  } catch (error) {
     document.querySelector('[data-step="browser"]').dataset.ready = "false";
+    if (!authorizationReported) {
+      addLog(
+        error.message === "Status 401"
+          ? "Open this dashboard from the Mirror Relay menu or CLI"
+          : `Bridge status unavailable: ${error.message}`,
+      );
+      authorizationReported = true;
+    }
   }
 }
 
 async function send(value) {
-  await post("/api/act", value);
+  return post("/api/act", value);
 }
 
 async function post(path, value) {
-  try {
-    const response = await fetch(`${path}${authQuery}`, {
-      method: "POST",
-      headers: value ? { "Content-Type": "application/json" } : {},
-      body: value ? JSON.stringify(value) : undefined,
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || `Request ${response.status}`);
-    return payload;
-  } catch (error) {
-    addLog(`Bridge error: ${error.message}`);
-    return null;
-  }
+  const response = await fetch(path, {
+    method: "POST",
+    headers: value ? { "Content-Type": "application/json" } : {},
+    body: value ? JSON.stringify(value) : undefined,
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `Request ${response.status}`);
+  return payload;
 }
 
-function sendPointer(phase, event) {
+function normalizedPoint(event, clamp = false) {
   const rect = elements.screenInput.getBoundingClientRect();
   const frame = containedFrame(rect, captureSize);
   let x = (event.clientX - frame.left) / frame.width;
   let y = (event.clientY - frame.top) / frame.height;
-  if (phase === "up") {
+  if (clamp) {
     x = Math.min(1, Math.max(0, x));
     y = Math.min(1, Math.max(0, y));
   } else if (x < 0 || x > 1 || y < 0 || y > 1) {
-    return false;
+    return null;
   }
-  void send({ type: "pointer", phase, x, y });
-  return true;
+  return { x, y };
 }
 
-function finishPointer(event) {
-  if (!pointerActive) return;
-  pointerActive = false;
-  sendPointer("up", event);
+async function finishGesture(event) {
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  const finished = gesture;
+  const point = normalizedPoint(event, true);
+  if (point) finished.end = point;
+  cancelGesture(event);
+
+  try {
+    await send(
+      gestureCommand(
+        finished.start,
+        finished.end,
+        performance.now() - finished.startedAt,
+      ),
+    );
+  } catch (error) {
+    addLog(`Control failed: ${error.message}`);
+  }
 }
 
-function submitText() {
+function cancelGesture(event) {
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  if (elements.screenInput.hasPointerCapture(event.pointerId)) {
+    elements.screenInput.releasePointerCapture(event.pointerId);
+  }
+  gesture = undefined;
+}
+
+async function submitText() {
   const text = elements.text.value;
-  if (!text.trim()) return;
-  send({ type: "type", text });
-  elements.text.value = "";
-  addLog(`Sent ${text.length} character${text.length === 1 ? "" : "s"}`);
+  if (!text.trim() || elements.sendText.disabled) return;
+  await runButtonAction(elements.sendText, async () => {
+    await send({ type: "type", text });
+    elements.text.value = "";
+    addLog(`Sent ${text.length} character${text.length === 1 ? "" : "s"}`);
+  });
+}
+
+async function runButtonAction(button, action) {
+  button.disabled = true;
+  try {
+    await action();
+  } catch (error) {
+    addLog(`Bridge error: ${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function updateStatus(status) {
@@ -155,7 +197,10 @@ function updateStatus(status) {
     ? `${status.width}×${status.height}`
     : "—";
   elements.bridgeDetail.textContent = status.message || "Waiting";
-  elements.latency.textContent = live ? "live packets" : "awaiting frames";
+  elements.latency.textContent =
+    live && Number.isFinite(status.frameAgeMs)
+      ? `${status.frameAgeMs} ms frame age`
+      : "awaiting frames";
 
   document.querySelector('[data-step="phone"]').dataset.ready = String(live);
   document.querySelector('[data-step="continuity"]').dataset.ready = String(live);
@@ -163,7 +208,8 @@ function updateStatus(status) {
 
   if (!live) {
     elements.emptyTitle.textContent = titleForPhase(status.phase);
-    elements.emptyCopy.textContent = status.message || "Keep the iPhone nearby, powered on, and locked.";
+    elements.emptyCopy.textContent =
+      status.message || "Keep the iPhone nearby, powered on, and locked.";
   }
 }
 
@@ -187,10 +233,8 @@ function friendlyPhase(phase) {
     starting: "Starting",
     waiting: "Waiting",
     streaming: "Live",
+    reconnecting: "Reconnecting",
     permission: "Permission",
-    launching: "Launching",
-    setup: "Setup",
-    missing: "Build needed",
     error: "Error",
     stopped: "Stopped",
   }[phase] || phase;
@@ -199,9 +243,7 @@ function friendlyPhase(phase) {
 function titleForPhase(phase) {
   return {
     permission: "Permission required",
-    launching: "Starting fallback automation",
-    setup: "One-time fallback setup required",
-    missing: "Build the native bridge",
+    reconnecting: "Reconnecting to iPhone Mirroring",
     error: "Bridge error",
     stopped: "Bridge stopped",
   }[phase] || "Waiting for iPhone Mirroring";

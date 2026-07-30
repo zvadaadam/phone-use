@@ -58,9 +58,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openDashboard() {
-        guard let url = URL(
-            string: "http://127.0.0.1:\(LocalHTTPServer.port)/?token=\(tokenStore.token)"
-        ) else {
+        guard let bootstrap = try? tokenStore.issueDashboardBootstrap() else {
+            state.log("Could not create a secure dashboard session")
+            return
+        }
+        guard
+            let url = URL(
+                string: "http://127.0.0.1:\(LocalHTTPServer.port)"
+                    + "/auth/dashboard?bootstrap=\(bootstrap)"
+            )
+        else {
             return
         }
         NSWorkspace.shared.open(url)
@@ -82,25 +89,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             if !(await coordinator.closeSession()) {
                 state.log("The iPhone automation session did not close cleanly")
-            }
-        }
-    }
-
-    @objc private func setUpAutomation() {
-        statusLine.title = "Preparing WebDriverAgent…"
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let projectURL = try await coordinator.prepareAutomation()
-                _ = await MainActor.run {
-                    NSWorkspace.shared.open(projectURL)
-                }
-                state.log(
-                    "In Xcode, select WebDriverAgentRunner → Signing & Capabilities, "
-                        + "choose your team, then run it once on the connected iPhone"
-                )
-            } catch {
-                state.log("Could not prepare WebDriverAgent: \(error.localizedDescription)")
             }
         }
     }
@@ -183,11 +171,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ).target = self
         menu.addItem(.separator())
         menu.addItem(
-            withTitle: "Set Up WebDriverAgent Fallback…",
-            action: #selector(setUpAutomation),
-            keyEquivalent: ""
-        ).target = self
-        menu.addItem(
             withTitle: "Grant Mirroring Permissions…",
             action: #selector(requestPermissions),
             keyEquivalent: ""
@@ -211,14 +194,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateMenu(_ snapshot: BrokerSnapshot) {
         statusLine.title = "\(friendlyPhase(snapshot.phase)) · \(snapshot.fps) fps"
-        if snapshot.transport == "webdriveragent" {
-            permissionsLine.title = "Transport: WebDriverAgent"
-        } else {
-            permissionsLine.title = [
-                snapshot.screenCaptureAuthorized ? "Screen ✓" : "Screen ✕",
-                snapshot.accessibilityAuthorized ? "Control ✓" : "Control ✕"
-            ].joined(separator: " · ")
-        }
+        permissionsLine.title = [
+            snapshot.screenCaptureAuthorized ? "Screen ✓" : "Screen ✕",
+            snapshot.accessibilityAuthorized ? "Control ✓" : "Control ✕"
+        ].joined(separator: " · ")
         statusItem.button?.toolTip = "Mirror Relay — \(snapshot.message)"
     }
 
@@ -259,8 +238,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "waiting": return "Waiting for iPhone"
         case "reconnecting": return "Reconnecting"
         case "starting": return "Starting"
-        case "launching": return "Launching WDA"
-        case "setup": return "Setup needed"
         default: return phase.capitalized
         }
     }

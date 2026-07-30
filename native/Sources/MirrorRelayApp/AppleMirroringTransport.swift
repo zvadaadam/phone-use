@@ -3,9 +3,7 @@ import ApplicationServices
 import Foundation
 import MirrorCore
 
-final class AppleMirroringTransport: PhoneTransport, @unchecked Sendable {
-    let name = "iphone-mirroring"
-
+final class AppleMirroringTransport: @unchecked Sendable {
     private let state: BrokerState
     private let target = WindowTarget()
     private let session = SessionController()
@@ -29,12 +27,8 @@ final class AppleMirroringTransport: PhoneTransport, @unchecked Sendable {
     func stop() {
         captureTask?.cancel()
         captureTask = nil
-    }
-
-    func isAvailable() async -> Bool {
-        NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: SessionController.mirroringBundleIdentifier
-        ) != nil
+        _ = session.close()
+        state.clearFrame()
     }
 
     func ensureSession(timeout: Duration) async throws {
@@ -43,11 +37,13 @@ final class AppleMirroringTransport: PhoneTransport, @unchecked Sendable {
         let deadline = clock.now.advanced(by: timeout)
         var attempts = 0
         while clock.now < deadline {
+            try Task.checkCancellation()
             let snapshot = state.snapshot()
             let connectionState = session.connectionState()
             if connectionState == .connected,
-               target.current() != nil,
-               snapshot.fps > 0 {
+                target.current() != nil,
+                snapshot.fps > 0
+            {
                 state.status(
                     phase: "streaming",
                     message: "Locked iPhone is connected through iPhone Mirroring",
@@ -78,7 +74,7 @@ final class AppleMirroringTransport: PhoneTransport, @unchecked Sendable {
                     accessibilityAuthorized: snapshot.accessibilityAuthorized
                 )
             }
-            try? await Task.sleep(for: .milliseconds(200))
+            try await Task.sleep(for: .milliseconds(200))
         }
         throw SessionError(
             "iPhone Mirroring did not reach a connected state. Keep the iPhone powered on, "
@@ -92,17 +88,19 @@ final class AppleMirroringTransport: PhoneTransport, @unchecked Sendable {
         }
     }
 
-    func sourceJSON() async throws -> Data {
-        throw SessionError(
-            "Apple iPhone Mirroring does not expose the phone accessibility tree to Mac apps"
-        )
-    }
-
     func closeSession() async -> Bool {
-        session.close()
-    }
-
-    func isRunning() async -> Bool {
-        session.isRunning()
+        let closed = session.close()
+        captureTask?.cancel()
+        await captureTask?.value
+        captureTask = nil
+        state.clearFrame()
+        state.status(
+            phase: "waiting",
+            message: "iPhone Mirroring is closed",
+            screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
+            accessibilityAuthorized: AXIsProcessTrusted()
+        )
+        start()
+        return closed
     }
 }

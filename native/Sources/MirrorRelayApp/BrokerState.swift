@@ -9,6 +9,7 @@ struct BrokerSnapshot: Codable, Sendable {
     let width: Int?
     let height: Int?
     let frameID: UInt64
+    let frameAgeMs: Int?
     let screenCaptureAuthorized: Bool
     let accessibilityAuthorized: Bool
     let logs: [String]
@@ -27,6 +28,7 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         message: "Mirror Relay is starting"
     )
     private var currentFrame: Data?
+    private var currentFrameCapturedAt: Date?
     private var currentFrameID: UInt64 = 0
     private var currentFrameHash = 0
     private var framesThisSecond = 0
@@ -54,6 +56,7 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         let frameID: UInt64
         lock.lock()
         currentFrame = data
+        currentFrameCapturedAt = Date()
         currentFrameID &+= 1
         currentFrameHash = data.hashValue
         frameID = currentFrameID
@@ -62,6 +65,21 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         lock.unlock()
         for observer in observers {
             observer(data, frameID)
+        }
+    }
+
+    func clearFrame() {
+        lock.lock()
+        currentFrame = nil
+        currentFrameCapturedAt = nil
+        currentFrameHash = 0
+        framesThisSecond = 0
+        currentFPS = 0
+        let snapshot = snapshotLocked()
+        let observers = Array(statusObservers.values)
+        lock.unlock()
+        for observer in observers {
+            observer(snapshot)
         }
     }
 
@@ -107,10 +125,16 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         return snapshotLocked()
     }
 
-    func latestFrame() -> (data: Data, id: UInt64)? {
+    func latestFrame(maxAge: TimeInterval = 3) -> (data: Data, id: UInt64)? {
         lock.lock()
         defer { lock.unlock() }
-        guard let currentFrame else { return nil }
+        guard bridgeStatus.phase == "streaming",
+            let currentFrame,
+            let currentFrameCapturedAt,
+            Date().timeIntervalSince(currentFrameCapturedAt) <= maxAge
+        else {
+            return nil
+        }
         return (currentFrame, currentFrameID)
     }
 
@@ -125,7 +149,16 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         let id = UUID()
         lock.lock()
         frameObservers[id] = observer
-        let existing = currentFrame.map { ($0, currentFrameID) }
+        let existing: (Data, UInt64)?
+        if bridgeStatus.phase == "streaming",
+            let currentFrame,
+            let currentFrameCapturedAt,
+            Date().timeIntervalSince(currentFrameCapturedAt) <= 3
+        {
+            existing = (currentFrame, currentFrameID)
+        } else {
+            existing = nil
+        }
         lock.unlock()
         if let existing {
             observer(existing.0, existing.1)
@@ -177,6 +210,9 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
             width: bridgeStatus.width,
             height: bridgeStatus.height,
             frameID: currentFrameID,
+            frameAgeMs: currentFrameCapturedAt.map {
+                max(0, Int(Date().timeIntervalSince($0) * 1_000))
+            },
             screenCaptureAuthorized: bridgeStatus.screenCaptureAuthorized ?? false,
             accessibilityAuthorized: bridgeStatus.accessibilityAuthorized ?? false,
             logs: Array(recentLogs.suffix(20))

@@ -1,1 +1,0 @@
-// Placeholder project consumed only by the fake xcodebuild contract test.

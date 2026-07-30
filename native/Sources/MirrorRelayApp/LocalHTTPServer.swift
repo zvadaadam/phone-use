@@ -5,8 +5,8 @@ import Network
 final class LocalHTTPServer: @unchecked Sendable {
     static let port: UInt16 = {
         guard let rawValue = ProcessInfo.processInfo.environment["MIRROR_RELAY_PORT"],
-              let value = UInt16(rawValue),
-              value > 0
+            let value = UInt16(rawValue),
+            value > 0
         else {
             return 8_747
         }
@@ -46,7 +46,7 @@ final class LocalHTTPServer: @unchecked Sendable {
             switch listenerState {
             case .ready:
                 self?.state.log("Agent bridge listening on 127.0.0.1:\(Self.port)")
-            case let .failed(error):
+            case .failed(let error):
                 self?.state.log("Agent bridge server failed: \(error)")
             default:
                 break
@@ -60,12 +60,14 @@ final class LocalHTTPServer: @unchecked Sendable {
     }
 
     func stop() {
-        listener?.cancel()
-        listener = nil
-        for client in clients.values {
-            client.cancel()
+        queue.sync {
+            listener?.cancel()
+            listener = nil
+            for client in clients.values {
+                client.cancel()
+            }
+            clients.removeAll()
         }
-        clients.removeAll()
     }
 
     private func accept(_ connection: NWConnection) {
@@ -86,6 +88,33 @@ final class LocalHTTPServer: @unchecked Sendable {
     }
 
     private func handle(_ request: HTTPRequest, from client: HTTPClient) {
+        if request.method == "GET", request.path == "/auth/dashboard" {
+            guard let bootstrap = request.query["bootstrap"] else {
+                client.sendJSON(status: 401, value: ErrorResponse(error: "Invalid or expired dashboard link"))
+                return
+            }
+            do {
+                guard let session = try tokenStore.exchangeDashboardBootstrap(bootstrap) else {
+                    client.sendJSON(
+                        status: 401,
+                        value: ErrorResponse(error: "Invalid or expired dashboard link")
+                    )
+                    return
+                }
+                client.redirect(
+                    to: "/",
+                    cookie: "MirrorRelaySession=\(session); HttpOnly; SameSite=Strict; "
+                        + "Path=/; Max-Age=\(Int(TokenStore.dashboardSessionLifetime))"
+                )
+            } catch {
+                client.sendJSON(
+                    status: 500,
+                    value: ErrorResponse(error: error.localizedDescription)
+                )
+            }
+            return
+        }
+
         if request.method == "GET", request.path == "/health" {
             let snapshot = state.snapshot()
             client.sendJSON(
@@ -102,6 +131,12 @@ final class LocalHTTPServer: @unchecked Sendable {
         }
 
         if request.path.hasPrefix("/api/") || request.path == "/stream.mjpeg" {
+            if let origin = request.headers["origin"],
+                origin != "http://127.0.0.1:\(Self.port)"
+            {
+                client.sendJSON(status: 403, value: ErrorResponse(error: "Origin not allowed"))
+                return
+            }
             guard authorized(request) else {
                 client.sendJSON(status: 401, value: ErrorResponse(error: "Unauthorized"))
                 return
@@ -109,6 +144,21 @@ final class LocalHTTPServer: @unchecked Sendable {
         }
 
         switch (request.method, request.path) {
+        case ("POST", "/api/dashboard/bootstrap"):
+            do {
+                let bootstrap = try tokenStore.issueDashboardBootstrap()
+                client.sendJSON(
+                    status: 200,
+                    value: DashboardBootstrapResponse(
+                        path: "/auth/dashboard?bootstrap=\(bootstrap)"
+                    )
+                )
+            } catch {
+                client.sendJSON(
+                    status: 500,
+                    value: ErrorResponse(error: error.localizedDescription)
+                )
+            }
         case ("GET", "/api/status"):
             client.sendJSON(status: 200, value: state.snapshot())
         case ("GET", "/api/observe"):
@@ -125,26 +175,6 @@ final class LocalHTTPServer: @unchecked Sendable {
                 ],
                 body: frame.data
             )
-        case ("GET", "/api/source"):
-            Task { [weak self, weak client] in
-                guard let self, let client else { return }
-                do {
-                    let source = try await coordinator.sourceJSON()
-                    client.send(
-                        status: 200,
-                        headers: [
-                            "Content-Type": "application/json; charset=utf-8",
-                            "Cache-Control": "no-store"
-                        ],
-                        body: source
-                    )
-                } catch {
-                    client.sendJSON(
-                        status: 409,
-                        value: ErrorResponse(error: error.localizedDescription)
-                    )
-                }
-            }
         case ("GET", "/stream.mjpeg"):
             client.beginMJPEG()
         case ("POST", "/api/session/open"):
@@ -198,10 +228,20 @@ final class LocalHTTPServer: @unchecked Sendable {
     }
 
     private func authorized(_ request: HTTPRequest) -> Bool {
-        if request.query["token"] == tokenStore.token {
+        if request.headers["authorization"] == "Bearer \(tokenStore.token)" {
             return true
         }
-        return request.headers["authorization"] == "Bearer \(tokenStore.token)"
+        guard let cookie = request.headers["cookie"],
+            let session =
+                cookie
+                .split(separator: ";")
+                .map({ $0.trimmingCharacters(in: .whitespaces) })
+                .first(where: { $0.hasPrefix("MirrorRelaySession=") })?
+                .dropFirst("MirrorRelaySession=".count)
+        else {
+            return false
+        }
+        return tokenStore.dashboardSessionIsValid(String(session))
     }
 
     private func serveStatic(_ request: HTTPRequest, to client: HTTPClient) {
@@ -230,7 +270,9 @@ final class LocalHTTPServer: @unchecked Sendable {
                 "Cache-Control": "no-store",
                 "Content-Security-Policy":
                     "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'",
-                "X-Content-Type-Options": "nosniff"
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY"
             ],
             body: request.method == "HEAD" ? Data() : data
         )
@@ -301,6 +343,19 @@ private final class HTTPClient: @unchecked Sendable {
         }
     }
 
+    func redirect(to location: String, cookie: String) {
+        send(
+            status: 303,
+            headers: [
+                "Location": location,
+                "Set-Cookie": cookie,
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer"
+            ],
+            body: Data()
+        )
+    }
+
     func send(status: Int, headers: [String: String], body: Data) {
         var allHeaders = headers
         allHeaders["Content-Length"] = String(body.count)
@@ -312,21 +367,23 @@ private final class HTTPClient: @unchecked Sendable {
         response += "\r\n"
         var packet = Data(response.utf8)
         packet.append(body)
-        connection.send(content: packet, completion: .contentProcessed { [weak self] _ in
-            self?.connection.cancel()
-            self?.finish()
-        })
+        connection.send(
+            content: packet,
+            completion: .contentProcessed { [weak self] _ in
+                self?.connection.cancel()
+                self?.finish()
+            })
     }
 
     func beginMJPEG() {
         let header = """
-        HTTP/1.1 200 OK\r
-        Content-Type: multipart/x-mixed-replace; boundary=frame\r
-        Cache-Control: no-store\r
-        Connection: keep-alive\r
-        \r
+            HTTP/1.1 200 OK\r
+            Content-Type: multipart/x-mixed-replace; boundary=frame\r
+            Cache-Control: no-store\r
+            Connection: keep-alive\r
+            \r
 
-        """
+            """
         connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
         frameObserverID = state.observeFrames { [weak self] frame, _ in
             self?.enqueueFrame(frame)
@@ -381,23 +438,25 @@ private final class HTTPClient: @unchecked Sendable {
         )
         packet.append(frame)
         packet.append(Data("\r\n".utf8))
-        connection.send(content: packet, completion: .contentProcessed { [weak self] error in
-            guard let self else { return }
-            if error != nil {
-                finish()
-                return
-            }
-            lock.lock()
-            let next = pendingFrame
-            pendingFrame = nil
-            if next == nil {
-                sendingFrame = false
-            }
-            lock.unlock()
-            if let next {
-                sendFrame(next)
-            }
-        })
+        connection.send(
+            content: packet,
+            completion: .contentProcessed { [weak self] error in
+                guard let self else { return }
+                if error != nil {
+                    finish()
+                    return
+                }
+                lock.lock()
+                let next = pendingFrame
+                pendingFrame = nil
+                if next == nil {
+                    sendingFrame = false
+                }
+                lock.unlock()
+                if let next {
+                    sendFrame(next)
+                }
+            })
     }
 
     private func finish() {
@@ -419,8 +478,10 @@ private final class HTTPClient: @unchecked Sendable {
     private static func reason(for status: Int) -> String {
         switch status {
         case 200: return "OK"
+        case 303: return "See Other"
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
+        case 403: return "Forbidden"
         case 404: return "Not Found"
         case 405: return "Method Not Allowed"
         case 409: return "Conflict"
@@ -442,10 +503,10 @@ private struct HTTPRequest: Sendable {
     static func parse(_ data: Data) -> HTTPRequest? {
         let separator = Data("\r\n\r\n".utf8)
         guard let headerRange = data.range(of: separator),
-              let headerText = String(
+            let headerText = String(
                 data: data[..<headerRange.lowerBound],
                 encoding: .utf8
-              )
+            )
         else {
             return nil
         }
@@ -463,13 +524,13 @@ private struct HTTPRequest: Sendable {
             headers[name] = value
         }
         guard let contentLength = Int(headers["content-length"] ?? "0"),
-              (0 ... 1_048_576).contains(contentLength)
+            (0...1_048_576).contains(contentLength)
         else {
             return nil
         }
         let bodyStart = headerRange.upperBound
         guard data.count >= bodyStart + contentLength else { return nil }
-        let body = Data(data[bodyStart ..< bodyStart + contentLength])
+        let body = Data(data[bodyStart..<bodyStart + contentLength])
 
         guard let components = URLComponents(string: parts[1]) else { return nil }
         var query: [String: String] = [:]
@@ -502,4 +563,8 @@ private struct HealthResponse: Codable {
 
 private struct SessionCloseResponse: Codable {
     let closed: Bool
+}
+
+private struct DashboardBootstrapResponse: Codable {
+    let path: String
 }

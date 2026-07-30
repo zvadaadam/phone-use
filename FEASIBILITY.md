@@ -34,8 +34,10 @@ rule out every WindowServer screenshot route. The deeper comparison found a
 maintained implementation that uses the `screencapture` service with a
 window/region fallback and controls the real app with HID-level events.
 
-Mirror Relay 0.5 implements that narrower route. It keeps the previously built
-WebDriverAgent transport as an explicit fallback.
+Mirror Relay 0.6 implements that narrower route and deliberately ships only the
+Apple transport. The earlier WebDriverAgent fallback was removed because it
+requires an unlocked development device and exposes a separate unauthenticated
+device server, neither of which fits the locked, local-only product boundary.
 
 ## Current-machine validation
 
@@ -71,7 +73,7 @@ Proven with the same capture and input code used by the broker:
 | Keyboard and system shortcuts | Implemented |
 | Locked iPhone | Proven with the installed app and physical iPhone |
 | Powered-off iPhone | Impossible |
-| Phone semantic UI tree | Unavailable through Mirroring; WDA fallback only |
+| Phone semantic UI tree | Unavailable through Mirroring |
 | Zero lifetime consent | Impossible; macOS requires one-time Screen Recording and Accessibility grants |
 | Stable permission identity | Implemented for local packaging; use Developer ID for distribution |
 
@@ -88,11 +90,12 @@ Proven with the same capture and input code used by the broker:
 - Apple can break this integration in a macOS update because no iPhone
   Mirroring SDK is documented.
 
-## Fallback
+## Deliberate non-goal
 
-`MIRROR_RELAY_TRANSPORT=webdriveragent` selects the USB/XCUITest path. It adds
-semantic UI source and deterministic device-level actions, but requires pairing,
-Developer Mode, signing, and an unlocked device during the automation session.
+USB/XCUITest and WebDriverAgent remain useful for test labs that need semantic
+iOS UI data. They are not included in Mirror Relay because they require
+Developer Mode, signing, an unlocked device, and an additional device-side
+control server.
 
 ## Safety boundary
 

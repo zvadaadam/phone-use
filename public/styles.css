@@ -463,6 +463,17 @@ body[data-live="true"] .empty-state {
   list-style: none;
 }
 
+.session-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.session-actions .button {
+  min-height: 42px;
+  padding: 0 18px;
+}
+
 .connection-path li {
   min-height: 48px;
   display: grid;

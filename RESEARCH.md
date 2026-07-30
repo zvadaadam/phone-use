@@ -70,9 +70,9 @@ It combines:
 - WebDriverAgent for control;
 - Developer Mode, pairing, tunneld/root setup, and Xcode signing.
 
-That is the same class of trade-off as Mirror Relay's WebDriverAgent fallback:
-more deterministic device automation, but more onboarding and no seamless
-locked iPhone Mirroring session.
+It confirms why WebDriverAgent is not part of the launch product: the route is
+more deterministic for a test lab, but adds onboarding and does not provide the
+seamless locked-iPhone session Mirror Relay is designed around.
 
 ## Other relevant projects
 
@@ -106,7 +106,8 @@ The best agent experience is:
 3. background launch at login;
 4. authenticated local `open → observe/act → close` calls;
 5. pixel/OCR/vision planning above the broker;
-6. explicit WDA fallback only when semantic iOS UI data is required.
+6. a separate test-lab product, not a hidden fallback, when semantic iOS UI
+   data is required.
 
 It is seamless after consent, but it is not an iPhone Mirroring SDK and cannot
 operate a powered-off phone.

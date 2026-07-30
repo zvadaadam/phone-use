@@ -6,6 +6,15 @@ PROJECT_DIR="${SCRIPT_DIR:h}"
 APP_DIR="${PROJECT_DIR}/dist/Mirror Relay.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 IDENTITY="${MIRROR_RELAY_SIGN_IDENTITY:--}"
+PACKAGE_VERSION=$(node -p "require('${PROJECT_DIR}/package.json').version")
+PLIST_VERSION=$(/usr/libexec/PlistBuddy \
+  -c "Print :CFBundleShortVersionString" \
+  "${PROJECT_DIR}/native/App/Info.plist")
+
+if [[ "${PACKAGE_VERSION}" != "${PLIST_VERSION}" ]]; then
+  print -u2 "Version mismatch: package.json=${PACKAGE_VERSION}, Info.plist=${PLIST_VERSION}"
+  exit 1
+fi
 
 swift build -c release --package-path "${PROJECT_DIR}/native"
 
@@ -21,7 +30,12 @@ cp "${PROJECT_DIR}/native/.build/release/mirror-relayctl" "${CONTENTS_DIR}/Resou
 cp "${PROJECT_DIR}/native/App/Info.plist" "${CONTENTS_DIR}/Info.plist"
 ditto "${PROJECT_DIR}/public" "${CONTENTS_DIR}/Resources/public"
 
-codesign --force --deep --options runtime --sign "${IDENTITY}" "${APP_DIR}"
+sign_args=(--force --options runtime --sign "${IDENTITY}")
+if [[ "${IDENTITY}" != "-" ]]; then
+  sign_args+=(--timestamp)
+fi
+codesign "${sign_args[@]}" "${CONTENTS_DIR}/Resources/bin/mirror-relayctl"
+codesign "${sign_args[@]}" "${APP_DIR}"
 codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
 
 print "Packaged ${APP_DIR}"

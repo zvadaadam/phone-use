@@ -5,7 +5,8 @@ import MirrorCore
 @main
 struct MirrorRelayCLI {
     private static let baseURL: URL = {
-        let port = UInt16(ProcessInfo.processInfo.environment["MIRROR_RELAY_PORT"] ?? "")
+        let port =
+            UInt16(ProcessInfo.processInfo.environment["MIRROR_RELAY_PORT"] ?? "")
             ?? 8_747
         return URL(string: "http://127.0.0.1:\(port)")!
     }()
@@ -27,9 +28,38 @@ struct MirrorRelayCLI {
             print(usage)
             return
         }
+        if command == "version" || command == "--version" {
+            print("Mirror Relay \(currentVersion())")
+            return
+        }
 
         let token = try await loadTokenStartingBrokerIfNeeded()
         switch command {
+        case "dashboard":
+            let response = try await request(
+                method: "POST",
+                path: "/api/dashboard/bootstrap",
+                token: token
+            )
+            let bootstrap = try JSONDecoder().decode(
+                DashboardBootstrapResponse.self,
+                from: response.data
+            )
+            guard let url = URL(string: bootstrap.path, relativeTo: baseURL)?.absoluteURL else {
+                throw CLIError("Mirror Relay returned an invalid dashboard URL")
+            }
+            guard NSWorkspace.shared.open(url) else {
+                throw CLIError("Could not open the Mirror Relay dashboard")
+            }
+            print("Opened Mirror Relay dashboard")
+        case "doctor":
+            let response = try await request(
+                method: "GET",
+                path: "/api/status",
+                token: token
+            )
+            let status = try JSONDecoder().decode(CLIStatus.self, from: response.data)
+            try printDoctor(status: status)
         case "status":
             try await printResponse(method: "GET", path: "/api/status", token: token)
         case "open":
@@ -44,41 +74,21 @@ struct MirrorRelayCLI {
             try response.data.write(to: URL(fileURLWithPath: arguments[1]), options: .atomic)
             let frameID = response.http.value(forHTTPHeaderField: "X-Frame-ID") ?? "unknown"
             print("Saved frame \(frameID) to \(arguments[1])")
-        case "source":
-            guard arguments.count <= 2 else {
-                throw CLIError("Usage: mirror-relayctl source [output.json]")
-            }
-            let response = try await request(method: "GET", path: "/api/source", token: token)
-            if arguments.count == 2 {
-                try response.data.write(
-                    to: URL(fileURLWithPath: arguments[1]),
-                    options: .atomic
-                )
-                print("Saved accessibility source to \(arguments[1])")
-            } else if let object = try? JSONSerialization.jsonObject(with: response.data),
-                      let pretty = try? JSONSerialization.data(
-                        withJSONObject: object,
-                        options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-                      ) {
-                print(String(decoding: pretty, as: UTF8.self))
-            } else {
-                print(String(decoding: response.data, as: UTF8.self))
-            }
         case "tap":
             guard arguments.count == 3,
-                  let x = Double(arguments[1]),
-                  let y = Double(arguments[2])
+                let x = Double(arguments[1]),
+                let y = Double(arguments[2])
             else {
                 throw CLIError("Usage: mirror-relayctl tap <x 0...1> <y 0...1>")
             }
             try await act(ControlCommand(type: "tap", x: x, y: y), token: token)
         case "swipe":
-            guard (5 ... 6).contains(arguments.count),
-                  let x = Double(arguments[1]),
-                  let y = Double(arguments[2]),
-                  let x2 = Double(arguments[3]),
-                  let y2 = Double(arguments[4]),
-                  arguments.count == 5 || Int(arguments[5]) != nil
+            guard (5...6).contains(arguments.count),
+                let x = Double(arguments[1]),
+                let y = Double(arguments[2]),
+                let x2 = Double(arguments[3]),
+                let y2 = Double(arguments[4]),
+                arguments.count == 5 || Int(arguments[5]) != nil
             else {
                 throw CLIError(
                     "Usage: mirror-relayctl swipe <x> <y> <x2> <y2> [duration-ms]"
@@ -114,6 +124,36 @@ struct MirrorRelayCLI {
         try await printResponse(method: "POST", path: "/api/act", token: token, body: body)
     }
 
+    private static func printDoctor(status: CLIStatus) throws {
+        let tokenURL = try tokenFileURL()
+        let attributes = try FileManager.default.attributesOfItem(atPath: tokenURL.path)
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue
+        let mirroringInstalled =
+            NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.apple.ScreenContinuity"
+            ) != nil
+        let installedApp = FileManager.default.fileExists(
+            atPath: "/Applications/Mirror Relay.app"
+        )
+        let report = DoctorReport(
+            ok: mirroringInstalled
+                && installedApp
+                && permissions == 0o600
+                && status.screenCaptureAuthorized
+                && status.accessibilityAuthorized,
+            version: currentVersion(),
+            transport: status.transport,
+            phase: status.phase,
+            installedApp: installedApp,
+            iPhoneMirroringInstalled: mirroringInstalled,
+            screenCaptureAuthorized: status.screenCaptureAuthorized,
+            accessibilityAuthorized: status.accessibilityAuthorized,
+            tokenPermissions: String(format: "%03o", permissions ?? 0)
+        )
+        let data = try JSONEncoder.pretty.encode(report)
+        print(String(decoding: data, as: UTF8.self))
+    }
+
     private static func printResponse(
         method: String,
         path: String,
@@ -122,10 +162,11 @@ struct MirrorRelayCLI {
     ) async throws {
         let response = try await request(method: method, path: path, token: token, body: body)
         if let object = try? JSONSerialization.jsonObject(with: response.data),
-           let pretty = try? JSONSerialization.data(
-               withJSONObject: object,
-               options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-           ) {
+            let pretty = try? JSONSerialization.data(
+                withJSONObject: object,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
+        {
             print(String(decoding: pretty, as: UTF8.self))
         } else {
             print(String(decoding: response.data, as: UTF8.self))
@@ -146,7 +187,7 @@ struct MirrorRelayCLI {
                     "Mirror Relay is not running and no packaged app could be found"
                 )
             }
-            for _ in 0 ..< 30 {
+            for _ in 0..<30 {
                 try? await Task.sleep(for: .milliseconds(100))
                 if let result = try? await send(
                     method: method,
@@ -179,8 +220,9 @@ struct MirrorRelayCLI {
         guard let http = response as? HTTPURLResponse else {
             throw CLIError("Mirror Relay returned a non-HTTP response")
         }
-        guard (200 ..< 300).contains(http.statusCode) else {
-            let detail = (try? JSONDecoder().decode(APIError.self, from: data).error)
+        guard (200..<300).contains(http.statusCode) else {
+            let detail =
+                (try? JSONDecoder().decode(APIError.self, from: data).error)
                 ?? String(decoding: data, as: UTF8.self)
             throw CLIError("HTTP \(http.statusCode): \(detail)")
         }
@@ -202,7 +244,8 @@ struct MirrorRelayCLI {
 
     private static func candidateAppURLs() -> [URL] {
         let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-        let containingApp = executable
+        let containingApp =
+            executable
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -218,8 +261,47 @@ struct MirrorRelayCLI {
         ]
     }
 
+    private static func currentVersion() -> String {
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        let containingApp =
+            executable
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let candidates = [containingApp] + candidateAppURLs()
+        for appURL in candidates where appURL.pathExtension == "app" {
+            let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
+            guard let data = try? Data(contentsOf: infoURL),
+                let rawInfo = try? PropertyListSerialization.propertyList(
+                    from: data,
+                    format: nil
+                ),
+                let info = rawInfo as? [String: Any],
+                let version = info["CFBundleShortVersionString"] as? String,
+                !version.isEmpty
+            else {
+                continue
+            }
+            return version
+        }
+        return "development"
+    }
+
     private static func loadToken() throws -> String {
-        let tokenURL = try FileManager.default.url(
+        let tokenURL = try tokenFileURL()
+        guard
+            let token = try? String(contentsOf: tokenURL, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !token.isEmpty
+        else {
+            throw CLIError("No local token exists. Launch Mirror Relay once first.")
+        }
+        return token
+    }
+
+    private static func tokenFileURL() throws -> URL {
+        try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
@@ -227,13 +309,6 @@ struct MirrorRelayCLI {
         )
         .appendingPathComponent("Mirror Relay", isDirectory: true)
         .appendingPathComponent("token", isDirectory: false)
-        guard let token = try? String(contentsOf: tokenURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !token.isEmpty
-        else {
-            throw CLIError("No local token exists. Launch Mirror Relay once first.")
-        }
-        return token
     }
 
     private static func loadTokenStartingBrokerIfNeeded() async throws -> String {
@@ -243,7 +318,7 @@ struct MirrorRelayCLI {
         guard try await launchBroker() else {
             throw CLIError("No local token exists and no packaged Mirror Relay app could be found")
         }
-        for _ in 0 ..< 30 {
+        for _ in 0..<30 {
             try? await Task.sleep(for: .milliseconds(100))
             if let token = try? loadToken() {
                 return token
@@ -253,17 +328,19 @@ struct MirrorRelayCLI {
     }
 
     private static let usage = """
-    Usage: mirror-relayctl <command>
+        Usage: mirror-relayctl <command>
 
-      status
-      open | close
-      observe <output.jpg>
-      source [output.json]
-      tap <x 0...1> <y 0...1>
-      swipe <x> <y> <x2> <y2> [duration-ms]
-      type <text>
-      home | apps | spotlight
-    """
+          dashboard
+          doctor
+          status
+          open | close
+          observe <output.jpg>
+          tap <x 0...1> <y 0...1>
+          swipe <x> <y> <x2> <y2> [duration-ms]
+          type <text>
+          home | apps | spotlight
+          version
+        """
 }
 
 private struct HTTPResult {
@@ -273,6 +350,37 @@ private struct HTTPResult {
 
 private struct APIError: Decodable {
     let error: String
+}
+
+private struct DashboardBootstrapResponse: Decodable {
+    let path: String
+}
+
+private struct CLIStatus: Decodable {
+    let transport: String
+    let phase: String
+    let screenCaptureAuthorized: Bool
+    let accessibilityAuthorized: Bool
+}
+
+private struct DoctorReport: Encodable {
+    let ok: Bool
+    let version: String
+    let transport: String
+    let phase: String
+    let installedApp: Bool
+    let iPhoneMirroringInstalled: Bool
+    let screenCaptureAuthorized: Bool
+    let accessibilityAuthorized: Bool
+    let tokenPermissions: String
+}
+
+extension JSONEncoder {
+    fileprivate static var pretty: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return encoder
+    }
 }
 
 private struct CLIError: LocalizedError {
