@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0 — 2026-07-30
+
+- Replaced process-per-frame primary capture with an in-memory, single-window
+  ScreenCaptureKit stream.
+- Added full-resolution 15 fps JPEG gating and retained the hardened
+  exact-window screenshot implementation as an automatic retrying fallback.
+- Added exact-window heartbeat frames for idle streams and automatic stream
+  reconfiguration when the Mirroring window rotates, resizes, or changes scale.
+- Hardened startup against an immediate ScreenCaptureKit delegate failure and
+  accepted only complete ScreenCaptureKit frames.
+- Added structured capture-mode status, centralized and unit-tested capture
+  policy decisions, and an opt-in real-device FPS/resolution/MJPEG smoke gate.
+- Made hidden/off-current-space Mirroring windows eligible for the stream
+  without broadening capture beyond the selected window.
+- Added stream sizing and rate-gate tests.
+- Corrected the feasibility record and documented the rejected Apple-private
+  transport route.
+
 ## 0.6.0 — 2026-07-30
 
 - Consolidated the product around Apple iPhone Mirroring and removed the legacy

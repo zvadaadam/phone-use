@@ -65,4 +65,75 @@ final class WindowCaptureCommandTests: XCTestCase {
             2
         )
     }
+
+    func testFrameRateGateLimitsAcceptedFrames() {
+        let gate = FrameRateGate(framesPerSecond: 10)
+
+        XCTAssertTrue(gate.shouldAccept(at: 1))
+        XCTAssertFalse(gate.shouldAccept(at: 1.05))
+        XCTAssertTrue(gate.shouldAccept(at: 1.10))
+
+        gate.reset()
+        XCTAssertTrue(gate.shouldAccept(at: 1.11))
+    }
+
+    func testScreenCaptureGeometryAppliesBackingScale() {
+        XCTAssertEqual(
+            ScreenCaptureGeometry.pixels(
+                for: CGSize(width: 354, height: 781),
+                scale: 2
+            ),
+            ScreenCaptureGeometry(width: 708, height: 1_562)
+        )
+    }
+
+    func testCapturePolicyOrdersIdleFallbackBeforeFrameExpiry() {
+        XCTAssertLessThan(
+            CapturePolicy.idleFallbackInterval,
+            CapturePolicy.frameFreshnessInterval
+        )
+        XCTAssertLessThanOrEqual(
+            CapturePolicy.outputFramesPerSecond,
+            Double(CapturePolicy.sourceFramesPerSecond)
+        )
+    }
+
+    func testCapturePolicyDecidesStreamTransitions() {
+        let portrait = ScreenCaptureGeometry(width: 708, height: 1_562)
+        let landscape = ScreenCaptureGeometry(width: 1_562, height: 708)
+        let now = Date()
+
+        XCTAssertTrue(
+            CapturePolicy.shouldRestartStream(
+                streamingWindowID: 42,
+                candidateWindowID: 42,
+                currentGeometry: portrait,
+                expectedGeometry: landscape
+            )
+        )
+        XCTAssertTrue(
+            CapturePolicy.shouldAttemptStream(
+                streamingWindowID: nil,
+                candidateWindowID: 42,
+                retryAt: now.addingTimeInterval(-1),
+                now: now
+            )
+        )
+        XCTAssertTrue(
+            CapturePolicy.shouldUseHeartbeat(
+                streamingWindowID: 42,
+                candidateWindowID: 42,
+                streamIsRunning: true,
+                frameIsFresh: false
+            )
+        )
+        XCTAssertFalse(
+            CapturePolicy.shouldUseHeartbeat(
+                streamingWindowID: 42,
+                candidateWindowID: 42,
+                streamIsRunning: true,
+                frameIsFresh: true
+            )
+        )
+    }
 }

@@ -2,9 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
 BASE_URL="http://127.0.0.1:8747"
 TOKEN_FILE="${HOME}/Library/Application Support/Mirror Relay/token"
 TEMP_DIR=$(mktemp -d /tmp/mirror-relay-smoke.XXXXXX)
+EXPECTED_VERSION=$(node -p "require('${PROJECT_DIR}/package.json').version")
 
 cleanup() {
   case "${TEMP_DIR}" in
@@ -14,8 +16,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 "${SCRIPT_DIR}/mirror-relayctl" status >/dev/null
-if [[ "$("${SCRIPT_DIR}/mirror-relayctl" version)" != "Mirror Relay 0.6.0" ]]; then
-  print -u2 "FAIL: installed CLI is not version 0.6.0"
+if [[ "$("${SCRIPT_DIR}/mirror-relayctl" version)" != "Mirror Relay ${EXPECTED_VERSION}" ]]; then
+  print -u2 "FAIL: installed CLI is not version ${EXPECTED_VERSION}"
   exit 1
 fi
 

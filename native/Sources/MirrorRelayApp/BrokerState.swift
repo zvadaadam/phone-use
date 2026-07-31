@@ -10,6 +10,7 @@ struct BrokerSnapshot: Codable, Sendable {
     let height: Int?
     let frameID: UInt64
     let frameAgeMs: Int?
+    let captureMode: CaptureMode
     let screenCaptureAuthorized: Bool
     let accessibilityAuthorized: Bool
     let logs: [String]
@@ -23,6 +24,7 @@ struct FrameMarker: Sendable {
 final class BrokerState: BridgeOutput, @unchecked Sendable {
     private let lock = NSLock()
     private var activeTransport = "starting"
+    private var activeCaptureMode = CaptureMode.unavailable
     private var bridgeStatus = BridgeStatus(
         phase: "starting",
         message: "Mirror Relay is starting"
@@ -83,6 +85,21 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         }
     }
 
+    func captureMode(_ mode: CaptureMode) {
+        lock.lock()
+        guard activeCaptureMode != mode else {
+            lock.unlock()
+            return
+        }
+        activeCaptureMode = mode
+        let snapshot = snapshotLocked()
+        let observers = Array(statusObservers.values)
+        lock.unlock()
+        for observer in observers {
+            observer(snapshot)
+        }
+    }
+
     func status(_ status: BridgeStatus) {
         lock.lock()
         bridgeStatus = status
@@ -125,7 +142,9 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         return snapshotLocked()
     }
 
-    func latestFrame(maxAge: TimeInterval = 3) -> (data: Data, id: UInt64)? {
+    func latestFrame(
+        maxAge: TimeInterval = CapturePolicy.frameFreshnessInterval
+    ) -> (data: Data, id: UInt64)? {
         lock.lock()
         defer { lock.unlock() }
         guard bridgeStatus.phase == "streaming",
@@ -153,7 +172,8 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         if bridgeStatus.phase == "streaming",
             let currentFrame,
             let currentFrameCapturedAt,
-            Date().timeIntervalSince(currentFrameCapturedAt) <= 3
+            Date().timeIntervalSince(currentFrameCapturedAt)
+                <= CapturePolicy.frameFreshnessInterval
         {
             existing = (currentFrame, currentFrameID)
         } else {
@@ -213,6 +233,7 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
             frameAgeMs: currentFrameCapturedAt.map {
                 max(0, Int(Date().timeIntervalSince($0) * 1_000))
             },
+            captureMode: activeCaptureMode,
             screenCaptureAuthorized: bridgeStatus.screenCaptureAuthorized ?? false,
             accessibilityAuthorized: bridgeStatus.accessibilityAuthorized ?? false,
             logs: Array(recentLogs.suffix(20))

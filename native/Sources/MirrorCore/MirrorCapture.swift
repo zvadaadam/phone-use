@@ -21,6 +21,34 @@ struct CapturedWindowFrame: Sendable {
     let height: Int
 }
 
+enum JPEGFrameEncoder {
+    static func encode(_ image: CGImage) -> CapturedWindowFrame? {
+        let output = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                output,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            )
+        else {
+            return nil
+        }
+        let properties = [
+            kCGImageDestinationLossyCompressionQuality: 0.78
+        ] as CFDictionary
+        CGImageDestinationAddImage(destination, image, properties)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return CapturedWindowFrame(
+            jpeg: output as Data,
+            width: image.width,
+            height: image.height
+        )
+    }
+}
+
 struct WindowCaptureCandidate: Sendable {
     let windowID: CGWindowID
     let processID: pid_t
@@ -185,31 +213,7 @@ final class CommandLineWindowCapture: @unchecked Sendable {
         else {
             return nil
         }
-
-        let output = NSMutableData()
-        guard
-            let destination = CGImageDestinationCreateWithData(
-                output,
-                UTType.jpeg.identifier as CFString,
-                1,
-                nil
-            )
-        else {
-            return nil
-        }
-        let properties =
-            [
-                kCGImageDestinationLossyCompressionQuality: 0.78
-            ] as CFDictionary
-        CGImageDestinationAddImage(destination, image, properties)
-        guard CGImageDestinationFinalize(destination) else {
-            return nil
-        }
-        return CapturedWindowFrame(
-            jpeg: output as Data,
-            width: image.width,
-            height: image.height
-        )
+        return JPEGFrameEncoder.encode(image)
     }
 }
 
@@ -217,14 +221,26 @@ public final class MirrorCapture: @unchecked Sendable {
     private let bundleIdentifier = "com.apple.ScreenContinuity"
     private let output: BridgeOutput
     private let target: WindowTarget
-    private let backend: CommandLineWindowCapture
+    private let fallbackBackend: CommandLineWindowCapture
+    private let streamingBackend: ScreenCaptureKitWindowCapture
+    private let stateLock = NSLock()
+    private let framePublicationLock = NSLock()
     private var activeWindowID: CGWindowID?
     private var lastStatusKey: String?
+    private var streamGeneration: UInt64 = 0
+    private var streamingFrameGeneration: UInt64 = 0
+    private var streamingWindowID: CGWindowID?
+    private var streamingGeometry: ScreenCaptureGeometry?
+    private var streamingStartedAt: Date?
+    private var lastStreamingFrameAt: Date?
+    private var nextStreamingRetryAt = Date.distantPast
+    private var usingFallbackHeartbeat = false
 
     public init(output: BridgeOutput, target: WindowTarget) {
         self.output = output
         self.target = target
-        backend = CommandLineWindowCapture()
+        fallbackBackend = CommandLineWindowCapture()
+        streamingBackend = ScreenCaptureKitWindowCapture()
     }
 
     public func run() async {
@@ -232,11 +248,14 @@ public final class MirrorCapture: @unchecked Sendable {
             phase: "starting",
             message: "Looking for iPhone Mirroring"
         )
+        output.captureMode(.unavailable)
 
         while !Task.isCancelled {
             guard CGPreflightScreenCaptureAccess() else {
+                await stopStreamingBackend()
                 target.clear()
-                activeWindowID = nil
+                setActiveWindowID(nil)
+                output.captureMode(.unavailable)
                 output.clearFrame()
                 publishStatus(
                     phase: "permission",
@@ -247,8 +266,10 @@ public final class MirrorCapture: @unchecked Sendable {
             }
 
             guard let window = findMirroringWindow() else {
+                await stopStreamingBackend()
                 target.clear()
-                activeWindowID = nil
+                setActiveWindowID(nil)
+                output.captureMode(.unavailable)
                 output.clearFrame()
                 publishStatus(
                     phase: "waiting",
@@ -258,22 +279,121 @@ public final class MirrorCapture: @unchecked Sendable {
                 continue
             }
 
-            if activeWindowID != window.windowID {
-                activeWindowID = window.windowID
+            if currentActiveWindowID() != window.windowID {
+                await stopStreamingBackend()
+                setActiveWindowID(window.windowID)
+                nextStreamingRetryAt = .distantPast
                 target.update(windowID: window.windowID, processID: window.processID)
                 output.log(
-                    "Capturing iPhone Mirroring window \(window.windowID) "
-                        + "with the macOS screenshot service"
+                    "Found iPhone Mirroring window \(window.windowID)"
                 )
             } else {
                 target.update(windowID: window.windowID, processID: window.processID)
             }
 
-            guard
-                let frame = await captureFrame(
-                    windowID: window.windowID
+            let expectedGeometry = ScreenCaptureGeometry.forWindowFrame(window.bounds)
+            if CapturePolicy.shouldRestartStream(
+                streamingWindowID: streamingWindowID,
+                candidateWindowID: window.windowID,
+                currentGeometry: streamingGeometry,
+                expectedGeometry: expectedGeometry
+            ) {
+                output.log(
+                    "iPhone Mirroring resized to \(expectedGeometry.width)x"
+                        + "\(expectedGeometry.height); restarting its capture stream"
                 )
-            else {
+                await stopStreamingBackend()
+                nextStreamingRetryAt = .distantPast
+            }
+
+            if case let .failed(message) = streamingBackend.state() {
+                output.log("ScreenCaptureKit stream stopped: \(message)")
+                await stopStreamingBackend()
+                nextStreamingRetryAt = Date().addingTimeInterval(
+                    CapturePolicy.streamRetryInterval
+                )
+            }
+
+            if CapturePolicy.shouldAttemptStream(
+                streamingWindowID: streamingWindowID,
+                candidateWindowID: window.windowID,
+                retryAt: nextStreamingRetryAt,
+                now: Date()
+            ) {
+                do {
+                    try await startStreamingBackend(for: window)
+                    try? await Task.sleep(
+                        for: .milliseconds(CapturePolicy.pollIntervalMilliseconds)
+                    )
+                    continue
+                } catch {
+                    output.log(
+                        "ScreenCaptureKit unavailable; using screenshot fallback: "
+                            + error.localizedDescription
+                    )
+                    await stopStreamingBackend()
+                    nextStreamingRetryAt = Date().addingTimeInterval(
+                        CapturePolicy.streamRetryInterval
+                    )
+                }
+            }
+
+            var heartbeatFrameGeneration: UInt64?
+            let streamIsRunning: Bool
+            if case .running = streamingBackend.state() {
+                streamIsRunning = true
+            } else {
+                streamIsRunning = false
+            }
+            let streamFrameIsFresh = streamingFrameIsFresh(
+                maxAge: CapturePolicy.idleFallbackInterval
+            )
+            if streamingWindowID == window.windowID,
+                streamIsRunning,
+                streamFrameIsFresh
+            {
+                usingFallbackHeartbeat = false
+                try? await Task.sleep(
+                    for: .milliseconds(CapturePolicy.pollIntervalMilliseconds)
+                )
+                continue
+            }
+            if CapturePolicy.shouldUseHeartbeat(
+                streamingWindowID: streamingWindowID,
+                candidateWindowID: window.windowID,
+                streamIsRunning: streamIsRunning,
+                frameIsFresh: streamFrameIsFresh
+            ) {
+                if !usingFallbackHeartbeat {
+                    output.log(
+                        "ScreenCaptureKit is idle; using exact-window heartbeat frames"
+                    )
+                    usingFallbackHeartbeat = true
+                }
+                heartbeatFrameGeneration = currentStreamingFrameGeneration()
+            }
+
+            let frame = await captureFrame(windowID: window.windowID)
+            if let heartbeatFrameGeneration {
+                let didPublish = publishHeartbeatFallback(
+                    frame,
+                    expectedFrameGeneration: heartbeatFrameGeneration,
+                    window: window
+                )
+                if didPublish {
+                    if frame == nil {
+                        try? await Task.sleep(for: .seconds(1))
+                    } else {
+                        try? await Task.sleep(
+                            for: .milliseconds(CapturePolicy.pollIntervalMilliseconds)
+                        )
+                    }
+                }
+                continue
+            }
+
+            guard let frame else {
+                output.captureMode(.unavailable)
                 output.clearFrame()
                 publishStatus(
                     phase: "reconnecting",
@@ -290,18 +410,16 @@ public final class MirrorCapture: @unchecked Sendable {
                 height: frame.height,
                 windowTitle: window.title
             )
+            output.captureMode(.screenshotFallback)
             output.frame(frame.jpeg)
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(
+                for: .milliseconds(CapturePolicy.pollIntervalMilliseconds)
+            )
         }
 
+        await stopStreamingBackend()
         target.clear()
-        activeWindowID = nil
-        output.clearFrame()
-    }
-
-    public func stop() async {
-        target.clear()
-        activeWindowID = nil
+        setActiveWindowID(nil)
         output.clearFrame()
     }
 
@@ -309,12 +427,160 @@ public final class MirrorCapture: @unchecked Sendable {
         windowID: CGWindowID
     ) async -> CapturedWindowFrame? {
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async { [backend] in
+            DispatchQueue.global(qos: .userInitiated).async { [fallbackBackend] in
                 continuation.resume(
-                    returning: backend.capture(windowID: windowID)
+                    returning: fallbackBackend.capture(windowID: windowID)
                 )
             }
         }
+    }
+
+    private func startStreamingBackend(
+        for window: WindowCaptureCandidate
+    ) async throws {
+        let generation = beginStreamingGeneration()
+        do {
+            let geometry = try await streamingBackend.start(
+                windowID: window.windowID
+            ) { [weak self] frame in
+                self?.receiveStreamingFrame(
+                    frame,
+                    windowID: window.windowID,
+                    windowTitle: window.title,
+                    streamGeneration: generation
+                )
+            }
+            streamingWindowID = window.windowID
+            streamingGeometry = geometry
+        } catch {
+            invalidateStreamingGeneration()
+            throw error
+        }
+        output.log(
+            "Streaming iPhone Mirroring window \(window.windowID) "
+                + "with public ScreenCaptureKit"
+        )
+    }
+
+    private func stopStreamingBackend() async {
+        streamingWindowID = nil
+        streamingGeometry = nil
+        usingFallbackHeartbeat = false
+        invalidateStreamingGeneration()
+        output.captureMode(.unavailable)
+        await streamingBackend.stop()
+    }
+
+    private func receiveStreamingFrame(
+        _ frame: CapturedWindowFrame,
+        windowID: CGWindowID,
+        windowTitle: String?,
+        streamGeneration: UInt64
+    ) {
+        framePublicationLock.lock()
+        defer { framePublicationLock.unlock() }
+        let isActive = stateLock.withLock {
+            guard activeWindowID == windowID,
+                self.streamGeneration == streamGeneration
+            else {
+                return false
+            }
+            streamingFrameGeneration &+= 1
+            lastStreamingFrameAt = Date()
+            return true
+        }
+        guard isActive else { return }
+        output.captureMode(.screenCaptureKit)
+        publishStatus(
+            phase: "streaming",
+            message: "iPhone Mirroring frames are available",
+            width: frame.width,
+            height: frame.height,
+            windowTitle: windowTitle
+        )
+        output.frame(frame.jpeg)
+    }
+
+    private func beginStreamingGeneration() -> UInt64 {
+        framePublicationLock.withLock {
+            stateLock.withLock {
+                streamGeneration &+= 1
+                streamingFrameGeneration &+= 1
+                streamingStartedAt = Date()
+                lastStreamingFrameAt = nil
+                return streamGeneration
+            }
+        }
+    }
+
+    private func invalidateStreamingGeneration() {
+        framePublicationLock.withLock {
+            stateLock.withLock {
+                streamGeneration &+= 1
+                streamingFrameGeneration &+= 1
+                streamingStartedAt = nil
+                lastStreamingFrameAt = nil
+            }
+        }
+    }
+
+    private func currentStreamingFrameGeneration() -> UInt64 {
+        stateLock.withLock { streamingFrameGeneration }
+    }
+
+    private func publishHeartbeatFallback(
+        _ frame: CapturedWindowFrame?,
+        expectedFrameGeneration: UInt64,
+        window: WindowCaptureCandidate
+    ) -> Bool {
+        framePublicationLock.lock()
+        defer { framePublicationLock.unlock() }
+        let isCurrent = stateLock.withLock {
+            activeWindowID == window.windowID
+                && streamingFrameGeneration == expectedFrameGeneration
+        }
+        guard isCurrent else { return false }
+
+        guard let frame else {
+            output.captureMode(.unavailable)
+            output.clearFrame()
+            publishStatus(
+                phase: "reconnecting",
+                message: "Mirroring is visible but its next frame could not be captured"
+            )
+            return true
+        }
+        publishStatus(
+            phase: "streaming",
+            message: "iPhone Mirroring frames are available",
+            width: frame.width,
+            height: frame.height,
+            windowTitle: window.title
+        )
+        output.captureMode(.screenshotFallback)
+        output.frame(frame.jpeg)
+        return true
+    }
+
+    private func streamingFrameIsFresh(maxAge: TimeInterval) -> Bool {
+        stateLock.withLock {
+            guard let reference = lastStreamingFrameAt ?? streamingStartedAt else {
+                return false
+            }
+            return Date().timeIntervalSince(reference) <= maxAge
+        }
+    }
+
+    private func currentActiveWindowID() -> CGWindowID? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return activeWindowID
+    }
+
+    private func setActiveWindowID(_ windowID: CGWindowID?) {
+        stateLock.lock()
+        activeWindowID = windowID
+        stateLock.unlock()
     }
 
     private func findMirroringWindow() -> WindowCaptureCandidate? {
@@ -465,8 +731,13 @@ public final class MirrorCapture: @unchecked Sendable {
         windowTitle: String? = nil
     ) {
         let key = "\(phase)|\(message)|\(width ?? 0)|\(height ?? 0)"
-        guard key != lastStatusKey else { return }
+        stateLock.lock()
+        guard key != lastStatusKey else {
+            stateLock.unlock()
+            return
+        }
         lastStatusKey = key
+        stateLock.unlock()
         output.status(
             phase: phase,
             message: message,

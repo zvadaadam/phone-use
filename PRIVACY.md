@@ -6,10 +6,11 @@ locally on the Mac.
 - Frames are served only through the authenticated loopback API.
 - The broker retains only the latest fresh JPEG in memory and clears it when the
   session closes or capture is unavailable.
-- Apple’s screenshot service briefly writes a source PNG inside a private
-  per-process `0700` scratch directory. The file is set to `0600`, deleted after
-  conversion, and stale directories are removed when their owner process no
-  longer exists.
+- The normal ScreenCaptureKit path captures and encodes frames entirely in
+  memory. If that stream is unavailable or idle, Apple’s exact-window
+  screenshot service briefly writes a source PNG inside a private per-process
+  `0700` scratch directory. The file is set to `0600`, deleted after conversion,
+  and stale directories are removed when their owner process no longer exists.
 - Typed text and interaction history are not persisted.
 - The CLI writes a frame only when the caller explicitly uses `observe` and
   chooses an output path.

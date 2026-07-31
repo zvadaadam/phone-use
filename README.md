@@ -7,16 +7,17 @@ control a real, powered-on iPhone through Apple’s iPhone Mirroring app.
 agent CLI / authenticated dashboard
         ↕ HTTP on 127.0.0.1:8747
 Mirror Relay menu-bar app
-        ↕ window-only capture + verified HID input
+        ↕ ScreenCaptureKit + verified HID input
 Apple iPhone Mirroring
         ↕ Apple Continuity
 nearby, powered-on, locked iPhone
 ```
 
 The browser does not embed Apple’s private UI and Mirror Relay does not patch or
-inject into Apple processes. It captures the authorized iPhone Mirroring window
-as JPEG frames, maps normalized coordinates to that window, verifies the target
-before every input event, and posts ordinary macOS HID events.
+inject into Apple processes. It streams only the authorized iPhone Mirroring
+window through Apple’s public ScreenCaptureKit API, encodes frames in memory,
+maps normalized coordinates to that window, verifies the target before every
+input event, and posts ordinary macOS HID events.
 
 ## Product boundary
 
@@ -110,7 +111,7 @@ and mutation routes require authentication.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Broker liveness and permission summary |
-| `GET` | `/api/status` | Phase, frame age, dimensions, and recent logs |
+| `GET` | `/api/status` | Phase, capture mode, frame age, dimensions, and recent logs |
 | `GET` | `/api/observe` | Fresh JPEG plus `X-Frame-ID` |
 | `GET` | `/stream.mjpeg` | Live multipart JPEG stream |
 | `POST` | `/api/session/open` | Open and wait for a live session |
@@ -136,17 +137,24 @@ cannot be replayed and dashboard sessions disappear when Mirror Relay quits.
   and topmost window before every event and throughout a swipe.
 - Capture is window-only and fails closed; it never falls back to a screen
   region that could contain unrelated Mac windows.
+- The primary capture path is an in-memory ScreenCaptureKit stream capped at 15
+  JPEG frames per second. If that stream cannot start, the broker retries it
+  while using an exact-window `screencapture -l` fallback. The same hardened
+  fallback supplies heartbeat frames when ScreenCaptureKit intentionally idles
+  on an unchanged screen.
 - Closing or losing the session clears the cached frame, and observations older
   than three seconds are rejected.
 - No LAN listener, cloud relay, passcode handling, jailbreak, private
   entitlement injection, or WebDriverAgent server is included.
 
-Apple’s `screencapture` service requires a file destination. Each source frame
-therefore exists briefly as a PNG inside a per-user `0700` scratch directory,
-is set to `0600`, converted to JPEG in memory, and deleted immediately. Stale
-scratch files are scrubbed at startup. Mirror Relay does not retain frames,
-typed text, or interaction history. An explicit CLI `observe` command writes
-the requested JPEG to the caller’s chosen path.
+The normal ScreenCaptureKit path keeps source frames and JPEG encoding in
+memory. Apple’s fallback `screencapture` service requires a file destination;
+only when that fallback is active does a source PNG briefly exist inside a
+per-user `0700` scratch directory. It is set to `0600`, converted to JPEG in
+memory, and deleted immediately. Stale scratch files are scrubbed at startup.
+Mirror Relay does not retain frames, typed text, or interaction history. An
+explicit CLI `observe` command writes the requested JPEG to the caller’s chosen
+path.
 
 Anyone controlling this macOS account and able to invoke the CLI can operate the
 paired phone. Do not proxy or tunnel port 8747.
@@ -156,13 +164,15 @@ paired phone. Do not proxy or tunnel port 8747.
 ```sh
 npm test                 # Node, Swift, and isolated broker integration
 npm run test:smoke       # exact installed app
+npm run test:device      # opt-in live paired-iPhone stream/fps check
 npm run check            # tests, warnings-as-errors release build, package
 ```
 
 The integration test verifies loopback binding, bearer authentication,
 single-use dashboard exchange, hardened cookies, origin rejection, validation,
 and token permissions. Native tests cover command validation, operation
-serialization, capture commands, and Mirroring-window selection.
+serialization, fallback capture commands, stream frame-rate gating and sizing,
+and Mirroring-window selection.
 
 ## Release packaging
 

@@ -8,36 +8,39 @@ as a controlled Mac application rather than an SDK.
 Mirror Relay can wrap the native app with public Mac mechanisms:
 
 1. launch and classify the `com.apple.ScreenContinuity` process;
-2. locate its largest compositor window;
-3. capture the window with `/usr/sbin/screencapture`, using window ID and exact
-   region strategies;
-4. convert captures to JPEG for the local agent API;
-5. activate the app and post global HID-level input at captured pixel
+2. identify its real phone window using WindowServer and Accessibility data;
+3. match that window ID in `SCShareableContent`;
+4. stream the single window with a desktop-independent ScreenCaptureKit filter;
+5. encode selected frames to JPEG in memory for the local agent API;
+6. retain exact-window `/usr/sbin/screencapture -l` only as a retrying fallback;
+7. activate the app and post global HID-level input at captured pixel
    coordinates;
-6. close the native app to end the route.
+8. close the native app to end the route.
 
-This is a viable local integration pattern and is independently exercised by
-the mature `mirroir-mcp` project. It is not a public Apple contract, so macOS
-updates can change its behavior.
+ScreenCaptureKit is a public, supported macOS capture framework. Capturing
+iPhone Mirroring specifically and controlling it with global HID events are
+empirically validated integrations, not a public iPhone Mirroring automation
+contract, so macOS updates can still change their behavior.
 
 ## Revised evidence
 
-The original negative conclusion was too broad. These observations remain true:
+The original negative ScreenCaptureKit conclusion was wrong. The early probe
+did not initialize and catalog WindowServer content in the same way as a normal
+AppKit application. A corrected `NSApplication`-backed probe and the production
+broker both stream the real Mirroring window successfully.
 
-- a direct ScreenCaptureKit stream produced `SCFrameStatus.suspended`;
-- macOS Accessibility exposes Mirroring's Mac window/state, not the iPhone UI
-  hierarchy;
-- one early `screencapture -l` probe captured uniform phone pixels.
+The remaining limitations are:
 
-They rule out ScreenCaptureKit streaming and semantic AX automation, but do not
-rule out every WindowServer screenshot route. The deeper comparison found a
-maintained implementation that uses the `screencapture` service with a
-window/region fallback and controls the real app with HID-level events.
+- macOS Accessibility exposes Mirroring's Mac window and session controls, not
+  the iPhone UI hierarchy;
+- ScreenCaptureKit supplies pixels, not iOS semantics;
+- synthetic input reaches Mirroring through global session HID events;
+- the Apple Continuity transport itself has no public third-party SDK.
 
-Mirror Relay 0.6 implements that narrower route and deliberately ships only the
-Apple transport. The earlier WebDriverAgent fallback was removed because it
-requires an unlocked development device and exposes a separate unauthenticated
-device server, neither of which fits the locked, local-only product boundary.
+Mirror Relay 0.7 uses the public stream for its primary capture path and keeps
+the exact-window screenshot path as a fail-safe. The earlier WebDriverAgent
+transport remains removed because it requires an unlocked development device
+and a separately signed device server.
 
 ## Current-machine validation
 
@@ -59,6 +62,15 @@ Proven with the same capture and input code used by the broker:
 - executed a phased swipe and observed the ChatGPT list scroll;
 - closed through the agent API and verified the native iPhone Mirroring process
   was no longer running.
+- streamed the hidden real Mirroring window with public ScreenCaptureKit at
+  708×1562: 158 frames in five seconds, 29.43 capture fps, 33.72 ms median and
+  36.51 ms p95 delivery interval;
+- ran the complete broker pipeline at 12–14 in-memory JPEG fps with fresh frame
+  ages normally below 100 ms;
+- delivered 43 authenticated MJPEG frames in three seconds through the local
+  browser endpoint while the window was behind other apps;
+- measured the release broker at approximately 12% of one CPU core and 67 MB
+  resident memory during continuous capture and JPEG encoding.
 
 ## Requirement audit
 
@@ -67,7 +79,7 @@ Proven with the same capture and input code used by the broker:
 | Background Mac broker | Implemented as menu-bar app with launch-at-login |
 | Local-only agent API | Authenticated listener on `127.0.0.1:8747` |
 | Start/close Mirroring | Implemented |
-| Observe native window | Implemented with JPEG window/region capture |
+| Observe native window | Public ScreenCaptureKit stream; exact-window fallback |
 | Pixel taps and drags | Implemented with global HID mouse events |
 | Native-feeling swipe | Implemented with phased continuous scroll events |
 | Keyboard and system shortcuts | Implemented |
@@ -75,7 +87,7 @@ Proven with the same capture and input code used by the broker:
 | Powered-off iPhone | Impossible |
 | Phone semantic UI tree | Unavailable through Mirroring |
 | Zero lifetime consent | Impossible; macOS requires one-time Screen Recording and Accessibility grants |
-| Stable permission identity | Implemented for local packaging; use Developer ID for distribution |
+| Stable permission identity | Requires stable signing; use Developer ID for distribution |
 
 ## Important operational limits
 
@@ -103,3 +115,24 @@ Mirror Relay does not patch iPhone Mirroring, inject into Apple processes,
 modify the region eligibility database, handle passcodes, or bypass Apple
 security. It controls only the user's visible, normally authorized Mac session
 and keeps its API loopback-only.
+
+## Apple-private API finding
+
+The installed Apple app links private `ScreenContinuityServices`,
+`ScreenSharingKit`, RemoteDisplay, Replicator, UniversalHID, and Wi-Fi
+peer-to-peer components. Read-only symbol inspection exposes capabilities such
+as a media transport client session, a screen-sharing video layer, video
+screenshots, HID reports, system gestures, accessibility messages, and
+pairing/session management.
+
+Those symbols confirm that Apple has a lower-level decoded video and input
+transport inside its own process. They do not provide an external SDK or a
+supported way to attach to the already-running session. The app also carries
+Apple-private RemoteDisplay, PairingManager, Replicator, SkyLight, Bluetooth,
+and Wi-Fi entitlements that a third-party signed app cannot request.
+
+Depending on those APIs would therefore require unsupported entitlement
+forgery, process injection, or recreating Apple’s private pairing and account
+state. That route is brittle, unsafe, incompatible with notarized distribution,
+and explicitly outside the product. Public ScreenCaptureKit reaches the same
+visible pixels without crossing that boundary.

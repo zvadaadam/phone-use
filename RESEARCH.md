@@ -4,14 +4,34 @@ Review date: 2026-07-30.
 
 ## Recommendation
 
-Use [`jfarcand/mirroir-mcp`](https://github.com/jfarcand/mirroir-mcp) as the
-technical reference, but keep Mirror Relay's own loopback API and dashboard.
-It is the only reviewed project centered on Apple's locked, wireless iPhone
-Mirroring session rather than a simulator or USB device automation.
+Use [`leeguooooo/iphone-use`](https://github.com/leeguooooo/iphone-use) as the
+primary high-performance capture reference and
+[`jfarcand/mirroir-mcp`](https://github.com/jfarcand/mirroir-mcp) as the
+pixel-control and agent-tool reference. Keep Mirror Relay's smaller
+authenticated loopback API and dashboard.
+
+## `leeguooooo/iphone-use`
+
+Best capture-performance evidence.
+
+- Correctly initializes AppKit before querying WindowServer shareable content.
+- Uses a desktop-independent single-window ScreenCaptureKit stream for the
+  iPhone Mirroring window.
+- Receives BGRA frames at roughly 30 fps, then uses VideoToolbox H.264 and
+  WebRTC for browser transport.
+- Uses global HID events for control and confirms targeted `postToPid` input
+  does not operate Mirroring.
+- Includes a single-controller lease and a broader LAN/WebRTC product surface.
+
+Mirror Relay adopts the public ScreenCaptureKit window stream, but not WebRTC
+or LAN access. In-memory JPEG over the existing authenticated loopback MJPEG
+route is substantially smaller, preserves the security model, and measured
+12–14 end-to-end fps on this Mac. H.264/WebRTC remains a later option if remote
+network transport or 30–60 fps human interaction becomes a product goal.
 
 ## `jfarcand/mirroir-mcp`
 
-Best fit.
+Best agent-tool and control reference.
 
 - Native Swift MCP server with an actively maintained release history.
 - Locates and classifies Apple's Mirroring window with AX and WindowServer data.
@@ -36,9 +56,9 @@ Local verification:
   library was absent, so the release binary was more reliable than a clean
   source build on this machine.
 
-Mirror Relay adopts the transport pattern, not the full 33-tool MCP surface.
-Its existing HTTP API is easier for a browser dashboard and for agents that are
-not MCP clients.
+Mirror Relay adopts its window classification and global HID lessons, not its
+process-per-frame capture path or full 33-tool MCP surface. The local HTTP API
+is easier for the browser dashboard and for agents that are not MCP clients.
 
 ## `Pauli1Go/iphone-mirroring-eu-enabler`
 
@@ -111,3 +131,14 @@ The best agent experience is:
 
 It is seamless after consent, but it is not an iPhone Mirroring SDK and cannot
 operate a powered-off phone.
+
+## Transport decision
+
+| Route | Real locked phone | Smoothness | Setup | Launchable |
+| --- | --- | --- | --- | --- |
+| ScreenCaptureKit + HID | Yes | 12–30 fps | Apple pairing + two Mac grants | Yes |
+| `screencapture -l` + HID | Yes | 2–7 fps | Same | Fallback only |
+| H.264/WebRTC over SCK | Yes | 30 fps | More dependencies/protocol surface | Later |
+| Private ScreenSharingKit | Theoretically | Native | Apple-only entitlements/session state | No |
+| USB DVT + WebDriverAgent | Not the locked wireless route | 5–15 fps | Developer Mode, USB/tunnel, signing | Test lab |
+| `simctl` / `serve-sim` | Simulator only | Up to 60 fps | Xcode simulator | Different product |

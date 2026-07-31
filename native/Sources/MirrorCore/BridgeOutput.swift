@@ -1,5 +1,11 @@
 import Foundation
 
+public enum CaptureMode: String, Codable, Sendable {
+    case unavailable
+    case screenCaptureKit
+    case screenshotFallback
+}
+
 public struct BridgeStatus: Codable, Sendable {
     public let phase: String
     public let message: String
@@ -31,6 +37,7 @@ public struct BridgeStatus: Codable, Sendable {
 public protocol BridgeOutput: AnyObject {
     func frame(_ data: Data)
     func clearFrame()
+    func captureMode(_ mode: CaptureMode)
     func status(_ status: BridgeStatus)
     func log(_ message: String)
 }

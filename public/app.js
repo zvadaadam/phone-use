@@ -196,7 +196,13 @@ function updateStatus(status) {
   elements.size.textContent = status.width && status.height
     ? `${status.width}×${status.height}`
     : "—";
-  elements.bridgeDetail.textContent = status.message || "Waiting";
+  const captureMode = {
+    screenCaptureKit: "ScreenCaptureKit",
+    screenshotFallback: "Screenshot fallback",
+  }[status.captureMode];
+  elements.bridgeDetail.textContent = [status.message || "Waiting", captureMode]
+    .filter(Boolean)
+    .join(" · ");
   elements.latency.textContent =
     live && Number.isFinite(status.frameAgeMs)
       ? `${status.frameAgeMs} ms frame age`
