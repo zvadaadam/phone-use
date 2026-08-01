@@ -15,7 +15,7 @@ struct MirrorRelayCLI {
         do {
             try await run(Array(CommandLine.arguments.dropFirst()))
         } catch {
-            FileHandle.standardError.write(Data("mirror-relayctl: \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("mirror-relay: \(error.localizedDescription)\n".utf8))
             Foundation.exit(1)
         }
     }
@@ -34,6 +34,7 @@ struct MirrorRelayCLI {
         }
 
         let token = try await loadTokenStartingBrokerIfNeeded()
+        let brokerStatus = try await compatibleBrokerStatus(token: token)
         switch command {
         case "dashboard":
             let response = try await request(
@@ -53,13 +54,7 @@ struct MirrorRelayCLI {
             }
             print("Opened Mirror Relay dashboard")
         case "doctor":
-            let response = try await request(
-                method: "GET",
-                path: "/api/status",
-                token: token
-            )
-            let status = try JSONDecoder().decode(CLIStatus.self, from: response.data)
-            try printDoctor(status: status)
+            try printDoctor(status: brokerStatus)
         case "status":
             try await printResponse(method: "GET", path: "/api/status", token: token)
         case "open":
@@ -68,7 +63,7 @@ struct MirrorRelayCLI {
             try await printResponse(method: "POST", path: "/api/session/close", token: token)
         case "observe":
             guard arguments.count == 2 else {
-                throw CLIError("Usage: mirror-relayctl observe <output.jpg>")
+                throw CLIError("Usage: mirror-relay observe <output.jpg>")
             }
             let response = try await request(method: "GET", path: "/api/observe", token: token)
             try response.data.write(to: URL(fileURLWithPath: arguments[1]), options: .atomic)
@@ -79,7 +74,7 @@ struct MirrorRelayCLI {
                 let x = Double(arguments[1]),
                 let y = Double(arguments[2])
             else {
-                throw CLIError("Usage: mirror-relayctl tap <x 0...1> <y 0...1>")
+                throw CLIError("Usage: mirror-relay tap <x 0...1> <y 0...1>")
             }
             try await act(ControlCommand(type: "tap", x: x, y: y), token: token)
         case "swipe":
@@ -91,7 +86,7 @@ struct MirrorRelayCLI {
                 arguments.count == 5 || Int(arguments[5]) != nil
             else {
                 throw CLIError(
-                    "Usage: mirror-relayctl swipe <x> <y> <x2> <y2> [duration-ms]"
+                    "Usage: mirror-relay swipe <x> <y> <x2> <y2> [duration-ms]"
                 )
             }
             try await act(
@@ -108,7 +103,7 @@ struct MirrorRelayCLI {
         case "type":
             let text = arguments.dropFirst().joined(separator: " ")
             guard !text.isEmpty else {
-                throw CLIError("Usage: mirror-relayctl type <text>")
+                throw CLIError("Usage: mirror-relay type <text>")
             }
             try await act(ControlCommand(type: "type", text: text), token: token)
         case "home", "apps", "spotlight":
@@ -142,6 +137,8 @@ struct MirrorRelayCLI {
                 && status.screenCaptureAuthorized
                 && status.accessibilityAuthorized,
             version: currentVersion(),
+            brokerVersion: status.version ?? "unknown",
+            protocolVersion: status.protocolVersion ?? 0,
             transport: status.transport,
             phase: status.phase,
             installedApp: installedApp,
@@ -243,49 +240,68 @@ struct MirrorRelayCLI {
     }
 
     private static func candidateAppURLs() -> [URL] {
-        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-        let containingApp =
-            executable
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0])
+        let containingApp = RelayProtocolMetadata.enclosingApplication(for: executable)
+        let registeredApp = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: RelayProtocolMetadata.appBundleIdentifier
+        )
         let workingDirectory = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath,
             isDirectory: true
         )
-        return [
-            URL(fileURLWithPath: "/Applications/Mirror Relay.app", isDirectory: true),
+        let candidates = [
             containingApp,
-            workingDirectory.appendingPathComponent("dist/Mirror Relay.app", isDirectory: true)
+            URL(fileURLWithPath: "/Applications/Mirror Relay.app", isDirectory: true),
+            registeredApp,
+            workingDirectory.appendingPathComponent("dist/Mirror Relay.app", isDirectory: true),
         ]
+        var seen: Set<String> = []
+        return candidates.compactMap { $0?.standardizedFileURL }.filter {
+            seen.insert($0.path).inserted
+        }
     }
 
     private static func currentVersion() -> String {
-        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-        let containingApp =
-            executable
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let candidates = [containingApp] + candidateAppURLs()
-        for appURL in candidates where appURL.pathExtension == "app" {
-            let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
-            guard let data = try? Data(contentsOf: infoURL),
-                let rawInfo = try? PropertyListSerialization.propertyList(
-                    from: data,
-                    format: nil
-                ),
-                let info = rawInfo as? [String: Any],
-                let version = info["CFBundleShortVersionString"] as? String,
-                !version.isEmpty
-            else {
-                continue
-            }
-            return version
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0])
+        guard let application = RelayProtocolMetadata.enclosingApplication(for: executable) else {
+            return "development"
         }
-        return "development"
+        return RelayProtocolMetadata.shortVersion(of: application) ?? "development"
+    }
+
+    private static func compatibleBrokerStatus(token: String) async throws -> CLIStatus {
+        let response = try await request(method: "GET", path: "/api/status", token: token)
+        let status = try JSONDecoder().decode(CLIStatus.self, from: response.data)
+        guard let protocolVersion = status.protocolVersion else {
+            throw CLIError(
+                "The running Mirror Relay broker is too old. Quit it and open the packaged app."
+            )
+        }
+        guard protocolVersion == RelayProtocolMetadata.currentVersion else {
+            throw CLIError(
+                "Protocol mismatch: CLI expects \(RelayProtocolMetadata.currentVersion), "
+                    + "broker provides \(protocolVersion). Quit stale copies and reopen Mirror Relay."
+            )
+        }
+
+        guard let brokerVersion = status.version else {
+            throw CLIError(
+                "The running Mirror Relay broker does not report a product version. "
+                    + "Quit stale copies and reopen Mirror Relay."
+            )
+        }
+
+        let cliVersion = currentVersion()
+        if cliVersion != "development",
+            brokerVersion != "development",
+            brokerVersion != cliVersion
+        {
+            throw CLIError(
+                "Version mismatch: CLI is \(cliVersion), broker is \(brokerVersion). "
+                    + "Quit stale copies and reopen Mirror Relay."
+            )
+        }
+        return status
     }
 
     private static func loadToken() throws -> String {
@@ -328,7 +344,7 @@ struct MirrorRelayCLI {
     }
 
     private static let usage = """
-        Usage: mirror-relayctl <command>
+        Usage: mirror-relay <command>
 
           dashboard
           doctor
@@ -357,6 +373,8 @@ private struct DashboardBootstrapResponse: Decodable {
 }
 
 private struct CLIStatus: Decodable {
+    let version: String?
+    let protocolVersion: Int?
     let transport: String
     let phase: String
     let screenCaptureAuthorized: Bool
@@ -366,6 +384,8 @@ private struct CLIStatus: Decodable {
 private struct DoctorReport: Encodable {
     let ok: Bool
     let version: String
+    let brokerVersion: String
+    let protocolVersion: Int
     let transport: String
     let phase: String
     let installedApp: Bool

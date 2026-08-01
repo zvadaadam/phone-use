@@ -6,7 +6,7 @@ PROJECT_DIR="${SCRIPT_DIR:h}"
 BASE_URL="http://127.0.0.1:8747"
 TOKEN_FILE="${HOME}/Library/Application Support/Mirror Relay/token"
 TEMP_DIR=$(mktemp -d /tmp/mirror-relay-smoke.XXXXXX)
-EXPECTED_VERSION=$(node -p "require('${PROJECT_DIR}/package.json').version")
+EXPECTED_VERSION=$(/usr/bin/plutil -extract version raw -o - "${PROJECT_DIR}/package.json")
 
 cleanup() {
   case "${TEMP_DIR}" in
@@ -43,8 +43,10 @@ assert_code() {
   fi
 }
 
-assert_code 200 "${BASE_URL}/health"
-assert_code 200 "${BASE_URL}/"
+assert_code 401 "${BASE_URL}/health"
+assert_code 200 -H "Authorization: Bearer ${TOKEN}" "${BASE_URL}/health"
+assert_code 401 "${BASE_URL}/"
+assert_code 200 -H "Authorization: Bearer ${TOKEN}" "${BASE_URL}/"
 assert_code 401 "${BASE_URL}/api/status"
 assert_code 401 "${BASE_URL}/api/status?token=${TOKEN}"
 assert_code 401 -H "Authorization: Bearer invalid" "${BASE_URL}/api/status"

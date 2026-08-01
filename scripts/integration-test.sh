@@ -34,13 +34,13 @@ MIRROR_RELAY_PUBLIC_DIR="${PROJECT_DIR}/public" \
 BROKER_PID=$!
 
 for _ in {1..100}; do
-  if curl -fsS "${BASE_URL}/health" >/dev/null 2>&1; then
+  if curl -sS "${BASE_URL}/" >/dev/null 2>&1; then
     break
   fi
   sleep 0.05
 done
 
-if ! curl -fsS "${BASE_URL}/health" >/dev/null 2>&1; then
+if ! curl -sS "${BASE_URL}/" >/dev/null 2>&1; then
   print -u2 "FAIL: broker did not start"
   exit 1
 fi
@@ -67,10 +67,24 @@ assert_code() {
   fi
 }
 
-assert_code 200 "${BASE_URL}/"
+assert_code 401 "${BASE_URL}/health"
+assert_code 200 -H "${AUTH_HEADER}" "${BASE_URL}/health"
+assert_code 401 "${BASE_URL}/"
+assert_code 200 -H "${AUTH_HEADER}" "${BASE_URL}/"
+assert_code 403 -H "Host: rebinding.attacker.example" "${BASE_URL}/"
 assert_code 401 "${BASE_URL}/api/status"
 assert_code 401 "${BASE_URL}/api/status?token=${TOKEN}"
 assert_code 200 -H "${AUTH_HEADER}" "${BASE_URL}/api/status"
+status_json=$(curl -fsS -H "${AUTH_HEADER}" "${BASE_URL}/api/status")
+STATUS_JSON="${status_json}" node -e '
+  const value = JSON.parse(process.env.STATUS_JSON);
+  if (value.protocolVersion !== 1) throw new Error("unexpected protocol version");
+  if (typeof value.version !== "string") throw new Error("missing product version");
+'
+assert_code 403 \
+  -H "Host: rebinding.attacker.example" \
+  -H "${AUTH_HEADER}" \
+  "${BASE_URL}/api/status"
 
 bootstrap_json=$(curl -fsS \
   -X POST \
@@ -111,4 +125,4 @@ if [[ "${listener}" != *"127.0.0.1:${API_PORT}"* ]]; then
   exit 1
 fi
 
-print "PASS: authenticated loopback API, one-time dashboard session, origin checks, and validation"
+print "PASS: authenticated loopback API, host/origin checks, one-time sessions, and validation"

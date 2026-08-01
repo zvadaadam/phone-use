@@ -89,6 +89,11 @@ final class LocalHTTPServer: @unchecked Sendable {
     }
 
     private func handle(_ request: HTTPRequest, from client: HTTPClient) {
+        guard request.headers["host"] == "127.0.0.1:\(Self.port)" else {
+            client.sendJSON(status: 403, value: ErrorResponse(error: "Host not allowed"))
+            return
+        }
+
         if request.method == "GET", request.path == "/auth/dashboard" {
             guard let bootstrap = request.query["bootstrap"] else {
                 client.sendJSON(status: 401, value: ErrorResponse(error: "Invalid or expired dashboard link"))
@@ -116,12 +121,25 @@ final class LocalHTTPServer: @unchecked Sendable {
             return
         }
 
+        if let origin = request.headers["origin"],
+            origin != "http://127.0.0.1:\(Self.port)"
+        {
+            client.sendJSON(status: 403, value: ErrorResponse(error: "Origin not allowed"))
+            return
+        }
+        guard authorized(request) else {
+            client.sendJSON(status: 401, value: ErrorResponse(error: "Unauthorized"))
+            return
+        }
+
         if request.method == "GET", request.path == "/health" {
             let snapshot = state.snapshot()
             client.sendJSON(
                 status: 200,
                 value: HealthResponse(
                     ok: true,
+                    version: snapshot.version,
+                    protocolVersion: snapshot.protocolVersion,
                     transport: snapshot.transport,
                     phase: snapshot.phase,
                     screenCaptureAuthorized: snapshot.screenCaptureAuthorized,
@@ -129,19 +147,6 @@ final class LocalHTTPServer: @unchecked Sendable {
                 )
             )
             return
-        }
-
-        if request.path.hasPrefix("/api/") || request.path == "/stream.mjpeg" {
-            if let origin = request.headers["origin"],
-                origin != "http://127.0.0.1:\(Self.port)"
-            {
-                client.sendJSON(status: 403, value: ErrorResponse(error: "Origin not allowed"))
-                return
-            }
-            guard authorized(request) else {
-                client.sendJSON(status: 401, value: ErrorResponse(error: "Unauthorized"))
-                return
-            }
         }
 
         switch (request.method, request.path) {
@@ -556,6 +561,8 @@ private struct ErrorResponse: Codable {
 
 private struct HealthResponse: Codable {
     let ok: Bool
+    let version: String
+    let protocolVersion: Int
     let transport: String
     let phase: String
     let screenCaptureAuthorized: Bool

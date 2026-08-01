@@ -67,6 +67,11 @@ Relaunch Mirror Relay after changing either permission. Ad-hoc local builds can
 need their grants refreshed when the binary changes. A Developer ID-signed
 release preserves a stable signing identity.
 
+Public releases are distributed as a notarized `Mirror Relay-<version>.dmg`.
+Drag the app to the Applications shortcut in the disk image. The app, its Swift
+CLI helper, and the disk image are signed; Bun, Node, Electron, and JavaScript
+runtimes are not shipped.
+
 The EU eligibility enabler is not part of Mirror Relay. If Apple’s app already
 connects, do not modify the macOS eligibility database.
 
@@ -90,6 +95,17 @@ Use the wrapper so agents never read or handle the bearer token directly:
 ./scripts/mirror-relayctl version
 ```
 
+The packaged Swift helper lives at:
+
+```text
+/Applications/Mirror Relay.app/Contents/Helpers/mirror-relay
+```
+
+It discovers its enclosing app before consulting Launch Services, launches the
+broker when needed, and rejects stale brokers with a different product or wire
+protocol version. The helper does not link ScreenCaptureKit and does not need a
+separate Screen Recording grant.
+
 Coordinates are normalized from `0` to `1`. Tap and swipe are atomic commands;
 the broker serializes all open, control, and close operations. Action responses
 include frame IDs and whether a fresh frame changed after the command.
@@ -105,8 +121,9 @@ stored in a `0700` directory with `0600` file permissions:
 ~/Library/Application Support/Mirror Relay/token
 ```
 
-`/health` and static dashboard assets are public to the local Mac. Phone data
-and mutation routes require authentication.
+Every route, including `/health` and static dashboard assets, requires the
+bearer token or an authenticated dashboard session. The one-time dashboard
+bootstrap URL is itself an expiring credential.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -130,7 +147,9 @@ cannot be replayed and dashboard sessions disappear when Mirror Relay quits.
   local-only mode.
 - Observation and control endpoints require a bearer token or dashboard
   session.
-- Browser mutations reject cross-origin requests.
+- Browser requests with an `Origin` header reject cross-origin access.
+- Every HTTP request must use the literal `127.0.0.1:<port>` host, preventing a
+  DNS-rebinding origin from reaching the broker.
 - Commands are bounded and validated, and mutations run in FIFO order.
 - Pointer gestures are sent as one tap or swipe instead of interleaved phases.
 - Input revalidates the target PID, window ID, bounds, frontmost application,
@@ -165,12 +184,14 @@ paired phone. Do not proxy or tunnel port 8747.
 npm test                 # Node, Swift, and isolated broker integration
 npm run test:smoke       # exact installed app
 npm run test:device      # opt-in live paired-iPhone stream/fps check
+npm run verify:package   # bundle layout, versions, links, and signatures
 npm run check            # tests, warnings-as-errors release build, package
 ```
 
 The integration test verifies loopback binding, bearer authentication,
-single-use dashboard exchange, hardened cookies, origin rejection, validation,
-and token permissions. Native tests cover command validation, operation
+single-use dashboard exchange, hardened cookies, host/origin rejection,
+protocol metadata, validation, and token permissions. Native tests cover
+command validation, operation
 serialization, fallback capture commands, stream frame-rate gating and sizing,
 and Mirroring-window selection.
 
@@ -187,13 +208,16 @@ npm run package:release
 ```
 
 The release command signs nested executables, submits the archive to Apple
-notary service, staples and validates the ticket, checks Gatekeeper acceptance,
-and creates `dist/Mirror Relay-<version>.zip`. It fails closed when either
-credential is missing.
+notary service, staples and validates the app and disk-image tickets, checks
+Gatekeeper acceptance, and creates `dist/Mirror Relay-<version>.dmg` plus a
+SHA-256 file. It fails closed when either credential is missing. See
+[PACKAGING.md](PACKAGING.md) for the identity policy and release checklist.
 
 ## Source layout
 
-- `native/Sources/MirrorCore` — capture, verified input, commands, and FIFO lock.
+- `native/Sources/MirrorCore` — capture, verified input, policies, and FIFO lock.
+- `native/Sources/MirrorRelayProtocol` — runtime-independent wire commands,
+  bundle discovery, and compatibility version.
 - `native/Sources/MirrorRelayApp` — menu-bar lifecycle, broker state, auth, and
   local HTTP server.
 - `native/Sources/MirrorRelayCLI` — token-hiding agent CLI.

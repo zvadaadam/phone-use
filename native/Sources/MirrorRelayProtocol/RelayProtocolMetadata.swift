@@ -2,7 +2,7 @@ import Foundation
 
 public enum RelayProtocolMetadata {
     public static let currentVersion = 1
-    public static let appBundleIdentifier = "dev.mirrorrelay.app"
+    public static let appBundleIdentifier = "com.adamzvada.mirrorrelay"
 
     public static func enclosingApplication(for executableURL: URL) -> URL? {
         var candidate = executableURL.resolvingSymlinksInPath().standardizedFileURL

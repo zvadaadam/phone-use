@@ -1,6 +1,6 @@
 {
   "name": "mirror-relay",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Local authenticated bridge for observing and controlling a locked iPhone through Apple iPhone Mirroring.",
@@ -8,6 +8,7 @@
     "build:native": "swift build -c release --package-path native",
     "package:app": "zsh scripts/package-app.sh",
     "package:release": "zsh scripts/package-release.sh",
+    "verify:package": "zsh scripts/verify-package.sh",
     "open:app": "open 'dist/Mirror Relay.app'",
     "relay": "zsh scripts/mirror-relayctl",
     "start": "npm run relay -- dashboard",

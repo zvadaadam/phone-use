@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0 — 2026-08-01
+
+- Moved the Swift CLI from `Contents/Resources` to Apple’s supported
+  `Contents/Helpers` bundle location and removed its capture-framework link.
+- Split wire commands and compatibility metadata into a lightweight Swift
+  protocol module with bundle-discovery tests.
+- Added product and protocol handshakes so the CLI rejects stale running app
+  copies instead of silently controlling an incompatible broker.
+- Required authentication on every route and added literal loopback `Host`
+  validation alongside the existing session-cookie and `Origin` protections.
+- Added bundle verification for layout, versions, architectures, hardened
+  runtime, nested signatures, framework links, Developer ID teams, Gatekeeper,
+  and notarization tickets.
+- Replaced the ZIP release with an app-and-DMG notarization pipeline that emits
+  a stapled disk image and SHA-256 checksum.
+- Froze the pre-release bundle identifier as `com.adamzvada.mirrorrelay`.
+
 ## 0.7.0 — 2026-07-30
 
 - Replaced process-per-frame primary capture with an in-memory, single-window

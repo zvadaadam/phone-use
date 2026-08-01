@@ -1,7 +1,10 @@
 import Foundation
 import MirrorCore
+import MirrorRelayProtocol
 
 struct BrokerSnapshot: Codable, Sendable {
+    let version: String
+    let protocolVersion: Int
     let transport: String
     let phase: String
     let message: String
@@ -223,6 +226,8 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
 
     private func snapshotLocked() -> BrokerSnapshot {
         BrokerSnapshot(
+            version: RelayProtocolMetadata.shortVersion(),
+            protocolVersion: RelayProtocolMetadata.currentVersion,
             transport: activeTransport,
             phase: bridgeStatus.phase,
             message: bridgeStatus.message,

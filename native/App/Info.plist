@@ -9,7 +9,7 @@
   <key>CFBundleExecutable</key>
   <string>Mirror Relay</string>
   <key>CFBundleIdentifier</key>
-  <string>dev.mirrorrelay.app</string>
+  <string>com.adamzvada.mirrorrelay</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -17,9 +17,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.7.0</string>
+  <string>0.8.0</string>
   <key>CFBundleVersion</key>
-  <string>8</string>
+  <string>9</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key>
