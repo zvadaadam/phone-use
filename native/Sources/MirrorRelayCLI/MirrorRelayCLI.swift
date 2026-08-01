@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import MirrorCore
+import MirrorRelayProtocol
 
 @main
 struct MirrorRelayCLI {

@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import MirrorRelayProtocol
 
 public final class InputController: @unchecked Sendable {
     private let output: BridgeOutput

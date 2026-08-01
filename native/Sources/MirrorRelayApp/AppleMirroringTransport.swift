@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 import MirrorCore
+import MirrorRelayProtocol
 
 final class AppleMirroringTransport: @unchecked Sendable {
     private let state: BrokerState

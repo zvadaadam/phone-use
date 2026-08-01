@@ -1,4 +1,5 @@
 import XCTest
+import MirrorRelayProtocol
 
 @testable import MirrorCore
 

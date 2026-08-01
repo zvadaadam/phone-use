@@ -1,5 +1,6 @@
 import Foundation
 import MirrorCore
+import MirrorRelayProtocol
 import Network
 
 final class LocalHTTPServer: @unchecked Sendable {

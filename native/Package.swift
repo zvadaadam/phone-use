@@ -13,23 +13,33 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "MirrorRelayProtocol",
+            path: "Sources/MirrorRelayProtocol"
+        ),
+        .target(
             name: "MirrorCore",
+            dependencies: ["MirrorRelayProtocol"],
             path: "Sources/MirrorCore"
         ),
         .executableTarget(
             name: "MirrorRelayApp",
-            dependencies: ["MirrorCore"],
+            dependencies: ["MirrorCore", "MirrorRelayProtocol"],
             path: "Sources/MirrorRelayApp"
         ),
         .executableTarget(
             name: "MirrorRelayCLI",
-            dependencies: ["MirrorCore"],
+            dependencies: ["MirrorRelayProtocol"],
             path: "Sources/MirrorRelayCLI"
         ),
         .testTarget(
             name: "MirrorCoreTests",
-            dependencies: ["MirrorCore"],
+            dependencies: ["MirrorCore", "MirrorRelayProtocol"],
             path: "Tests/MirrorCoreTests"
+        ),
+        .testTarget(
+            name: "MirrorRelayProtocolTests",
+            dependencies: ["MirrorRelayProtocol"],
+            path: "Tests/MirrorRelayProtocolTests"
         )
     ],
     swiftLanguageModes: [.v5]

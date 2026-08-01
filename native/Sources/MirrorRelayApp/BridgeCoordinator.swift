@@ -1,5 +1,6 @@
 import Foundation
 import MirrorCore
+import MirrorRelayProtocol
 
 struct ActResult: Codable, Sendable {
     let success: Bool
