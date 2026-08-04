@@ -1,6 +1,6 @@
 # iPhone Mirroring Automation Repository Review
 
-Review date: 2026-07-30.
+Review updated: 2026-08-04.
 
 ## Recommendation
 
@@ -19,8 +19,8 @@ Best capture-performance evidence.
   iPhone Mirroring window.
 - Receives BGRA frames at roughly 30 fps, then uses VideoToolbox H.264 and
   WebRTC for browser transport.
-- Uses global HID events for control and confirms targeted `postToPid` input
-  does not operate Mirroring.
+- Uses global HID events for control after directly-created targeted CGEvents
+  proved insufficient in that implementation.
 - Includes a single-controller lease and a broader LAN/WebRTC product surface.
 
 Mirror Relay adopts the public ScreenCaptureKit window stream, but not WebRTC
@@ -36,8 +36,8 @@ Best agent-tool and control reference.
 - Native Swift MCP server with an actively maintained release history.
 - Locates and classifies Apple's Mirroring window with AX and WindowServer data.
 - Captures through `screencapture -l`, with `screencapture -R` as a fallback.
-- Uses global HID-level `CGEvent` input because `postToPid` does not register
-  taps in iPhone Mirroring.
+- Uses global HID-level `CGEvent` input because its directly-created
+  `postToPid` events did not register taps in iPhone Mirroring.
 - Implements trackpad-like phased scrolling for iOS swipes.
 - Adds Apple Vision OCR and optional model-based perception.
 - Exposes a broad MCP tool surface with fail-closed, read-only permissions by
@@ -56,9 +56,14 @@ Local verification:
   library was absent, so the release binary was more reliable than a clean
   source build on this machine.
 
-Mirror Relay adopts its window classification and global HID lessons, not its
-process-per-frame capture path or full 33-tool MCP surface. The local HTTP API
-is easier for the browser dashboard and for agents that are not MCP clients.
+Mirror Relay adopts its window-classification and phased-scroll lessons, not
+its process-per-frame capture path, foreground HID delivery, or full 33-tool
+MCP surface. Local testing found a narrower background route: start pointer
+events as AppKit `NSEvent` envelopes, add the destination window's WindowServer
+metadata, then use `postToPid`. Directly-created CGEvents with only the public
+fields still failed, which explains the earlier projects' result. The local
+HTTP API is easier for the browser dashboard and for agents that are not MCP
+clients.
 
 ## `Pauli1Go/iphone-mirroring-eu-enabler`
 
@@ -136,8 +141,8 @@ operate a powered-off phone.
 
 | Route | Real locked phone | Smoothness | Setup | Launchable |
 | --- | --- | --- | --- | --- |
-| ScreenCaptureKit + HID | Yes | 12–30 fps | Apple pairing + two Mac grants | Yes |
-| `screencapture -l` + HID | Yes | 2–7 fps | Same | Fallback only |
+| ScreenCaptureKit + process-targeted AppKit events | Yes | 12–30 fps | Apple pairing + two Mac grants | Yes |
+| `screencapture -l` + process-targeted AppKit events | Yes | 2–7 fps | Same | Fallback only |
 | H.264/WebRTC over SCK | Yes | 30 fps | More dependencies/protocol surface | Later |
 | Private ScreenSharingKit | Theoretically | Native | Apple-only entitlements/session state | No |
 | USB DVT + WebDriverAgent | Not the locked wireless route | 5–15 fps | Developer Mode, USB/tunnel, signing | Test lab |

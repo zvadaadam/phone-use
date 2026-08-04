@@ -1,16 +1,15 @@
-import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
 import MirrorRelayProtocol
 
 public final class InputController: @unchecked Sendable {
-    private let output: BridgeOutput
+    private let logger: RelayLogger
     private let target: WindowTarget
     private let commandLock = NSLock()
 
-    public init(output: BridgeOutput, target: WindowTarget) {
-        self.output = output
+    public init(logger: RelayLogger, target: WindowTarget) {
+        self.logger = logger
         self.target = target
     }
 
@@ -21,15 +20,11 @@ public final class InputController: @unchecked Sendable {
 
         let command = try rawCommand.validated()
         guard AXIsProcessTrusted() else {
-            output.status(
-                phase: "permission",
-                message: "Accessibility permission is required for iPhone control",
-                accessibilityAuthorized: false
-            )
+            logger.log("Control command rejected because Accessibility is not authorized")
             return false
         }
         guard target.current() != nil else {
-            output.log("Control command rejected because iPhone Mirroring is not connected")
+            logger.log("Control command rejected because iPhone Mirroring is not connected")
             return false
         }
 
@@ -52,33 +47,17 @@ public final class InputController: @unchecked Sendable {
     private func tap(_ command: ControlCommand) -> Bool {
         guard let x = command.x,
             let y = command.y,
-            let prepared = prepareTarget()
+            let prepared = preparePointerTarget()
         else {
             return false
         }
-        let savedCursor = CGEvent(source: nil)?.location
-        defer { restoreCursor(savedCursor) }
 
-        guard
-            postPointer(
-                x: x,
-                y: y,
-                eventType: .leftMouseDown,
-                target: prepared
-            )
-        else {
+        guard postPointer(x: x, y: y, phase: .down, target: prepared) else {
             return false
         }
         Thread.sleep(forTimeInterval: 0.05)
-        guard
-            postPointer(
-                x: x,
-                y: y,
-                eventType: .leftMouseUp,
-                target: prepared
-            )
-        else {
-            postUnconditionalMouseUp(x: x, y: y, bounds: prepared.bounds)
+        guard postPointer(x: x, y: y, phase: .up, target: prepared) else {
+            postUnconditionalMouseUp(x: x, y: y, target: prepared)
             return false
         }
         return true
@@ -89,7 +68,7 @@ public final class InputController: @unchecked Sendable {
             let startY = command.y,
             let endX = command.x2,
             let endY = command.y2,
-            let prepared = prepareTarget()
+            let prepared = preparePointerTarget()
         else {
             return false
         }
@@ -99,25 +78,7 @@ public final class InputController: @unchecked Sendable {
             x: start.x + ((end.x - start.x) / 2),
             y: start.y + ((end.y - start.y) / 2)
         )
-        let savedCursor = CGEvent(source: nil)?.location
-        defer { restoreCursor(savedCursor) }
-
-        guard targetOwns(point: midpoint, prepared: prepared) else {
-            return false
-        }
-        CGWarpMouseCursorPosition(midpoint)
-        Thread.sleep(forTimeInterval: 0.1)
-        guard targetOwns(point: midpoint, prepared: prepared) else {
-            return false
-        }
-        if let move = CGEvent(
-            mouseEventSource: nil,
-            mouseType: .mouseMoved,
-            mouseCursorPosition: midpoint,
-            mouseButton: .left
-        ) {
-            move.post(tap: .cghidEventTap)
-        }
+        guard prepared.bounds.contains(midpoint) else { return false }
 
         let duration = Double(command.durationMs ?? 350) / 1_000
         let steps = max(Int(duration * 60), 10)
@@ -129,7 +90,7 @@ public final class InputController: @unchecked Sendable {
                 deltaX: 0,
                 deltaY: 0,
                 point: midpoint,
-                phase: 128,
+                phase: .mayBegin,
                 target: prepared
             )
         else {
@@ -143,11 +104,11 @@ public final class InputController: @unchecked Sendable {
                     deltaX: deltaX,
                     deltaY: deltaY,
                     point: midpoint,
-                    phase: index == 0 ? 1 : 2,
+                    phase: index == 0 ? .began : .changed,
                     target: prepared
                 )
             else {
-                postScrollEnd(at: midpoint)
+                postScrollEnd(at: midpoint, target: prepared)
                 return false
             }
             Thread.sleep(forTimeInterval: duration / Double(steps))
@@ -156,13 +117,13 @@ public final class InputController: @unchecked Sendable {
             deltaX: 0,
             deltaY: 0,
             point: midpoint,
-            phase: 4,
+            phase: .ended,
             target: prepared
         )
     }
 
     private func type(_ text: String) -> Bool {
-        guard let prepared = prepareTarget() else { return false }
+        guard let snapshot = target.current() else { return false }
         var characters = Array(text.utf16)
         guard !characters.isEmpty,
             let keyDown = CGEvent(
@@ -189,14 +150,14 @@ public final class InputController: @unchecked Sendable {
                 unicodeString: buffer.baseAddress
             )
         }
-        guard targetStillValid(prepared) else { return false }
-        keyDown.post(tap: .cghidEventTap)
+        guard targetStillMatches(snapshot) else { return false }
+        keyDown.postToPid(snapshot.processID)
         Thread.sleep(forTimeInterval: 0.01)
-        guard targetStillValid(prepared) else {
-            keyUp.post(tap: .cghidEventTap)
+        guard targetStillMatches(snapshot) else {
+            keyUp.postToPid(snapshot.processID)
             return false
         }
-        keyUp.post(tap: .cghidEventTap)
+        keyUp.postToPid(snapshot.processID)
         return true
     }
 
@@ -208,28 +169,29 @@ public final class InputController: @unchecked Sendable {
         case "spotlight": keyCode = 20
         default: return false
         }
-        guard let prepared = prepareTarget() else { return false }
-        return postKey(keyCode, flags: .maskCommand, target: prepared)
+        guard let snapshot = target.current() else { return false }
+        return postKey(keyCode, flags: .maskCommand, target: snapshot)
     }
 
     private func postPointer(
         x: Double,
         y: Double,
-        eventType: CGEventType,
-        target prepared: PreparedTarget
+        phase: TargetedEventFactory.MousePhase,
+        target prepared: StablePointerTarget
     ) -> Bool {
         let point = absolutePoint(x: x, y: y, bounds: prepared.bounds)
-        guard targetOwns(point: point, prepared: prepared),
-            let event = CGEvent(
-                mouseEventSource: nil,
-                mouseType: eventType,
-                mouseCursorPosition: point,
-                mouseButton: .left
+        guard pointerTargetStillMatches(prepared),
+            prepared.bounds.contains(point),
+            let event = TargetedEventFactory.leftMouse(
+                phase: phase,
+                for: prepared.snapshot.windowID,
+                at: point,
+                within: prepared.bounds
             )
         else {
             return false
         }
-        event.post(tap: .cghidEventTap)
+        event.postToPid(prepared.snapshot.processID)
         return true
     }
 
@@ -237,71 +199,68 @@ public final class InputController: @unchecked Sendable {
         deltaX: CGFloat,
         deltaY: CGFloat,
         point: CGPoint,
-        phase: Int64,
-        target prepared: PreparedTarget
+        phase: TargetedEventFactory.ScrollPhase,
+        target prepared: StablePointerTarget
     ) -> Bool {
-        guard targetOwns(point: point, prepared: prepared),
-            let event = scrollEvent(
+        guard pointerTargetStillMatches(prepared),
+            prepared.bounds.contains(point),
+            let event = TargetedEventFactory.scroll(
                 deltaX: deltaX,
                 deltaY: deltaY,
-                point: point,
-                phase: phase
+                phase: phase,
+                for: prepared.snapshot.windowID,
+                at: point,
+                within: prepared.bounds
             )
         else {
             return false
         }
-        event.post(tap: .cghidEventTap)
+        event.postToPid(prepared.snapshot.processID)
         return true
     }
 
-    private func scrollEvent(
-        deltaX: CGFloat,
-        deltaY: CGFloat,
-        point: CGPoint,
-        phase: Int64
-    ) -> CGEvent? {
-        guard let continuous = CGEventField(rawValue: 88),
-            let pointDeltaY = CGEventField(rawValue: 96),
-            let pointDeltaX = CGEventField(rawValue: 97),
-            let scrollPhase = CGEventField(rawValue: 99),
-            let event = CGEvent(
-                scrollWheelEvent2Source: nil,
-                units: .pixel,
-                wheelCount: 2,
-                wheel1: Int32(deltaY.rounded()),
-                wheel2: Int32(deltaX.rounded()),
-                wheel3: 0
+    private func postScrollEnd(
+        at point: CGPoint,
+        target prepared: StablePointerTarget
+    ) {
+        guard
+            let event = TargetedEventFactory.scroll(
+                deltaX: 0,
+                deltaY: 0,
+                phase: .ended,
+                for: prepared.snapshot.windowID,
+                at: point,
+                within: prepared.bounds
             )
         else {
-            return nil
+            return
         }
-        event.location = point
-        event.setIntegerValueField(continuous, value: 1)
-        event.setIntegerValueField(pointDeltaY, value: Int64(deltaY.rounded()))
-        event.setIntegerValueField(pointDeltaX, value: Int64(deltaX.rounded()))
-        event.setIntegerValueField(scrollPhase, value: phase)
-        return event
+        event.postToPid(prepared.snapshot.processID)
     }
 
-    private func postScrollEnd(at point: CGPoint) {
-        scrollEvent(deltaX: 0, deltaY: 0, point: point, phase: 4)?
-            .post(tap: .cghidEventTap)
-    }
-
-    private func postUnconditionalMouseUp(x: Double, y: Double, bounds: CGRect) {
-        let point = absolutePoint(x: x, y: y, bounds: bounds)
-        CGEvent(
-            mouseEventSource: nil,
-            mouseType: .leftMouseUp,
-            mouseCursorPosition: point,
-            mouseButton: .left
-        )?.post(tap: .cghidEventTap)
+    private func postUnconditionalMouseUp(
+        x: Double,
+        y: Double,
+        target prepared: StablePointerTarget
+    ) {
+        let point = absolutePoint(x: x, y: y, bounds: prepared.bounds)
+        guard
+            let event = TargetedEventFactory.leftMouse(
+                phase: .up,
+                for: prepared.snapshot.windowID,
+                at: point,
+                within: prepared.bounds
+            )
+        else {
+            return
+        }
+        event.postToPid(prepared.snapshot.processID)
     }
 
     private func postKey(
         _ keyCode: CGKeyCode,
         flags: CGEventFlags,
-        target prepared: PreparedTarget
+        target snapshot: WindowTarget.Snapshot
     ) -> Bool {
         guard
             let modifierDown = CGEvent(
@@ -335,72 +294,44 @@ public final class InputController: @unchecked Sendable {
         modifierUp.type = .flagsChanged
 
         for event in [modifierDown, down, up, modifierUp] {
-            guard targetStillValid(prepared) else {
-                modifierUp.post(tap: .cghidEventTap)
+            guard targetStillMatches(snapshot) else {
+                modifierUp.postToPid(snapshot.processID)
                 return false
             }
-            event.post(tap: .cghidEventTap)
+            event.postToPid(snapshot.processID)
             Thread.sleep(forTimeInterval: 0.008)
         }
         return true
     }
 
-    private func prepareTarget() -> PreparedTarget? {
+    private func preparePointerTarget() -> StablePointerTarget? {
         guard let snapshot = target.current() else { return nil }
-        let alreadyFrontmost =
-            NSWorkspace.shared.frontmostApplication?.processIdentifier == snapshot.processID
-        if !alreadyFrontmost,
-            let application = NSRunningApplication(processIdentifier: snapshot.processID)
-        {
-            application.activate()
-            Thread.sleep(forTimeInterval: 0.35)
-        }
-        guard let bounds = target.bounds(),
-            NSWorkspace.shared.frontmostApplication?.processIdentifier == snapshot.processID
-        else {
-            return nil
-        }
-        return PreparedTarget(snapshot: snapshot, bounds: bounds)
-    }
-
-    private func targetStillValid(_ prepared: PreparedTarget) -> Bool {
-        guard let current = target.current(),
-            current.windowID == prepared.snapshot.windowID,
-            current.processID == prepared.snapshot.processID,
-            NSWorkspace.shared.frontmostApplication?.processIdentifier
-                == prepared.snapshot.processID,
-            target.bounds() == prepared.bounds
-        else {
-            return false
-        }
-        return true
-    }
-
-    private func targetOwns(point: CGPoint, prepared: PreparedTarget) -> Bool {
-        guard targetStillValid(prepared),
-            let windows = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements],
-                kCGNullWindowID
-            ) as? [[String: Any]]
-        else {
-            return false
-        }
-        for window in windows {
-            guard let rawBounds = window[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(
-                    dictionaryRepresentation: rawBounds as CFDictionary
-                ),
-                bounds.contains(point),
-                (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0
+        let deadline = Date().addingTimeInterval(3)
+        var stability = WindowBoundsStability(requiredConsecutiveSamples: 4)
+        repeat {
+            guard targetStillMatches(snapshot),
+                let bounds = target.bounds(for: snapshot)
             else {
-                continue
+                logger.log("Control command lost its iPhone Mirroring target")
+                return nil
             }
-            let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value
-            let processID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
-            return windowID == prepared.snapshot.windowID
-                && processID == prepared.snapshot.processID
-        }
-        return false
+            if stability.observe(bounds) {
+                return StablePointerTarget(snapshot: snapshot, bounds: bounds)
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+
+        logger.log("Control command could not prepare stable iPhone Mirroring bounds")
+        return nil
+    }
+
+    private func targetStillMatches(_ snapshot: WindowTarget.Snapshot) -> Bool {
+        target.current() == snapshot
+    }
+
+    private func pointerTargetStillMatches(_ prepared: StablePointerTarget) -> Bool {
+        targetStillMatches(prepared.snapshot)
+            && target.bounds(for: prepared.snapshot) == prepared.bounds
     }
 
     private func absolutePoint(x: Double, y: Double, bounds: CGRect) -> CGPoint {
@@ -409,14 +340,30 @@ public final class InputController: @unchecked Sendable {
             y: bounds.minY + (bounds.height * y)
         )
     }
-
-    private func restoreCursor(_ point: CGPoint?) {
-        guard let point else { return }
-        CGWarpMouseCursorPosition(point)
-    }
 }
 
-private struct PreparedTarget {
+private struct StablePointerTarget {
     let snapshot: WindowTarget.Snapshot
     let bounds: CGRect
+}
+
+struct WindowBoundsStability {
+    let requiredConsecutiveSamples: Int
+    private var previousBounds: CGRect?
+    private var consecutiveSamples = 0
+
+    init(requiredConsecutiveSamples: Int) {
+        precondition(requiredConsecutiveSamples > 0)
+        self.requiredConsecutiveSamples = requiredConsecutiveSamples
+    }
+
+    mutating func observe(_ bounds: CGRect) -> Bool {
+        if bounds == previousBounds {
+            consecutiveSamples += 1
+        } else {
+            previousBounds = bounds
+            consecutiveSamples = 1
+        }
+        return consecutiveSamples >= requiredConsecutiveSamples
+    }
 }

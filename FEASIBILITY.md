@@ -13,14 +13,15 @@ Mirror Relay can wrap the native app with public Mac mechanisms:
 4. stream the single window with a desktop-independent ScreenCaptureKit filter;
 5. encode selected frames to JPEG in memory for the local agent API;
 6. retain exact-window `/usr/sbin/screencapture -l` only as a retrying fallback;
-7. activate the app and post global HID-level input at captured pixel
-   coordinates;
+7. post process-targeted AppKit/CoreGraphics event envelopes at captured pixel
+   coordinates without activating the app or switching Spaces;
 8. close the native app to end the route.
 
 ScreenCaptureKit is a public, supported macOS capture framework. Capturing
-iPhone Mirroring specifically and controlling it with global HID events are
-empirically validated integrations, not a public iPhone Mirroring automation
-contract, so macOS updates can still change their behavior.
+iPhone Mirroring specifically and adding private WindowServer targeting
+metadata to input events are empirically validated integrations, not a public
+iPhone Mirroring automation contract, so macOS updates can still change their
+behavior.
 
 ## Revised evidence
 
@@ -34,10 +35,11 @@ The remaining limitations are:
 - macOS Accessibility exposes Mirroring's Mac window and session controls, not
   the iPhone UI hierarchy;
 - ScreenCaptureKit supplies pixels, not iOS semantics;
-- synthetic input reaches Mirroring through global session HID events;
+- synthetic input reaches Mirroring through process-targeted event envelopes
+  with undocumented WindowServer fields;
 - the Apple Continuity transport itself has no public third-party SDK.
 
-Mirror Relay 0.7 uses the public stream for its primary capture path and keeps
+Mirror Relay 0.8 uses the public stream for its primary capture path and keeps
 the exact-window screenshot path as a fail-safe. The earlier WebDriverAgent
 transport remains removed because it requires an unlocked development device
 and a separately signed device server.
@@ -69,6 +71,8 @@ Proven with the same capture and input code used by the broker:
   ages normally below 100 ms;
 - delivered 43 authenticated MJPEG frames in three seconds through the local
   browser endpoint while the window was behind other apps;
+- delivered process-targeted clicks to covered and off-current-Space windows
+  while continuous foreground sampling stayed on the user's active app;
 - measured the release broker at approximately 12% of one CPU core and 67 MB
   resident memory during continuous capture and JPEG encoding.
 
@@ -80,7 +84,7 @@ Proven with the same capture and input code used by the broker:
 | Local-only agent API | Authenticated listener on `127.0.0.1:8747` |
 | Start/close Mirroring | Implemented |
 | Observe native window | Public ScreenCaptureKit stream; exact-window fallback |
-| Pixel taps and drags | Implemented with global HID mouse events |
+| Pixel taps and drags | Implemented with process-targeted AppKit event envelopes |
 | Native-feeling swipe | Implemented with phased continuous scroll events |
 | Keyboard and system shortcuts | Implemented |
 | Locked iPhone | Proven with the installed app and physical iPhone |
@@ -97,8 +101,8 @@ Proven with the same capture and input code used by the broker:
 - iPhone Mirroring must be available for the Apple Account and region.
 - The agent sees pixels, not iOS accessibility nodes. OCR or vision planning
   can be layered on later.
-- Global HID input briefly makes iPhone Mirroring frontmost. This is how the
-  native app receives synthetic input.
+- Input does not activate, raise, or move iPhone Mirroring, switch Spaces, or
+  move the Mac pointer.
 - Apple can break this integration in a macOS update because no iPhone
   Mirroring SDK is documented.
 

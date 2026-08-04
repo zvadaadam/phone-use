@@ -11,69 +11,62 @@ final class AppleMirroringTransport: @unchecked Sendable {
     private let capture: MirrorCapture
     private let input: InputController
     private var captureTask: Task<Void, Never>?
+    private var sessionMonitorTask: Task<Void, Never>?
 
     init(state: BrokerState) {
         self.state = state
         capture = MirrorCapture(output: state, target: target)
-        input = InputController(output: state, target: target)
+        input = InputController(logger: state, target: target)
     }
 
     func start() {
-        guard captureTask == nil else { return }
-        captureTask = Task { [capture] in
-            await capture.run()
+        if captureTask == nil {
+            captureTask = Task { [capture] in
+                await capture.run()
+            }
+        }
+        if sessionMonitorTask == nil {
+            sessionMonitorTask = Task { [weak self] in
+                await self?.monitorSession()
+            }
         }
     }
 
     func stop() {
         captureTask?.cancel()
         captureTask = nil
+        sessionMonitorTask?.cancel()
+        sessionMonitorTask = nil
         _ = session.close()
+        state.updateSession(.waitingForApplication)
         state.clearFrame()
     }
 
     func ensureSession(timeout: Duration) async throws {
+        if state.snapshot().phase == .streaming, target.current() != nil {
+            return
+        }
         try await session.open()
+        state.updatePermissions(
+            RelayPermissions(
+                screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
+                accessibilityAuthorized: AXIsProcessTrusted()
+            )
+        )
+        state.updateSession(.confirming)
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
-        var attempts = 0
         while clock.now < deadline {
             try Task.checkCancellation()
             let snapshot = state.snapshot()
-            let connectionState = session.connectionState()
-            if connectionState == .connected,
-                target.current() != nil,
-                snapshot.fps > 0
-            {
-                state.status(
-                    phase: "streaming",
-                    message: "Locked iPhone is connected through iPhone Mirroring",
-                    width: snapshot.width,
-                    height: snapshot.height,
-                    screenCaptureAuthorized: snapshot.screenCaptureAuthorized,
-                    accessibilityAuthorized: snapshot.accessibilityAuthorized
-                )
+            if snapshot.phase == .streaming, target.current() != nil {
                 return
             }
-            if attempts.isMultiple(of: 5) {
-                session.attemptConnect()
-            }
-            attempts += 1
-            if !CGPreflightScreenCaptureAccess() {
+            if !snapshot.screenCaptureAuthorized {
                 throw SessionError("Screen Recording permission is required")
             }
-            if !AXIsProcessTrusted() {
+            if !snapshot.accessibilityAuthorized {
                 throw SessionError("Accessibility permission is required for iPhone control")
-            }
-            if connectionState == .paused {
-                state.status(
-                    phase: "waiting",
-                    message: "Keep the iPhone powered on, nearby, and locked so Mirroring can connect",
-                    width: snapshot.width,
-                    height: snapshot.height,
-                    screenCaptureAuthorized: snapshot.screenCaptureAuthorized,
-                    accessibilityAuthorized: snapshot.accessibilityAuthorized
-                )
             }
             try await Task.sleep(for: .milliseconds(200))
         }
@@ -84,6 +77,14 @@ final class AppleMirroringTransport: @unchecked Sendable {
     }
 
     func send(_ command: ControlCommand) async throws {
+        guard state.snapshot().phase == .streaming,
+            target.current() != nil,
+            session.inspect().state == .candidateLive
+        else {
+            throw SessionError(
+                "iPhone Mirroring is no longer connected. Lock the iPhone and try again."
+            )
+        }
         guard try input.handle(command) else {
             throw SessionError("The bridge could not deliver the control command")
         }
@@ -94,14 +95,57 @@ final class AppleMirroringTransport: @unchecked Sendable {
         captureTask?.cancel()
         await captureTask?.value
         captureTask = nil
+        state.updateSession(.waitingForApplication)
         state.clearFrame()
-        state.status(
-            phase: "waiting",
-            message: "iPhone Mirroring is closed",
-            screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
-            accessibilityAuthorized: AXIsProcessTrusted()
-        )
         start()
         return closed
+    }
+
+    private func monitorSession() async {
+        var readiness = MirroringSessionReadiness()
+        var pausedSamples = 0
+        while !Task.isCancelled {
+            let permissions = RelayPermissions(
+                screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
+                accessibilityAuthorized: AXIsProcessTrusted()
+            )
+            state.updatePermissions(permissions)
+
+            guard permissions.screenCaptureAuthorized,
+                permissions.accessibilityAuthorized
+            else {
+                readiness.reset()
+                state.updateSession(.confirming)
+                try? await Task.sleep(for: .milliseconds(250))
+                continue
+            }
+
+            let inspection = session.inspect()
+            switch inspection.state {
+            case .candidateLive:
+                pausedSamples = 0
+                let ready = readiness.observe(
+                    .candidateLive,
+                    captureIsReady: state.captureIsReady()
+                )
+                state.updateSession(ready ? .connected : .confirming)
+            case .paused:
+                readiness.reset()
+                state.updateSession(.waitingForPhone)
+                if pausedSamples.isMultiple(of: 20) {
+                    _ = session.performReconnectAction(from: inspection)
+                }
+                pausedSamples += 1
+            case .indeterminate:
+                pausedSamples = 0
+                readiness.reset()
+                state.updateSession(.confirming)
+            case .noWindow, .notRunning:
+                pausedSamples = 0
+                readiness.reset()
+                state.updateSession(.waitingForApplication)
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
     }
 }

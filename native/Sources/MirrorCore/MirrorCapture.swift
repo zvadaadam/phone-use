@@ -34,9 +34,10 @@ enum JPEGFrameEncoder {
         else {
             return nil
         }
-        let properties = [
-            kCGImageDestinationLossyCompressionQuality: 0.78
-        ] as CFDictionary
+        let properties =
+            [
+                kCGImageDestinationLossyCompressionQuality: 0.78
+            ] as CFDictionary
         CGImageDestinationAddImage(destination, image, properties)
         guard CGImageDestinationFinalize(destination) else {
             return nil
@@ -219,7 +220,7 @@ final class CommandLineWindowCapture: @unchecked Sendable {
 
 public final class MirrorCapture: @unchecked Sendable {
     private let bundleIdentifier = "com.apple.ScreenContinuity"
-    private let output: BridgeOutput
+    private let output: CaptureOutput
     private let target: WindowTarget
     private let fallbackBackend: CommandLineWindowCapture
     private let streamingBackend: ScreenCaptureKitWindowCapture
@@ -236,7 +237,7 @@ public final class MirrorCapture: @unchecked Sendable {
     private var nextStreamingRetryAt = Date.distantPast
     private var usingFallbackHeartbeat = false
 
-    public init(output: BridgeOutput, target: WindowTarget) {
+    public init(output: CaptureOutput, target: WindowTarget) {
         self.output = output
         self.target = target
         fallbackBackend = CommandLineWindowCapture()
@@ -245,7 +246,7 @@ public final class MirrorCapture: @unchecked Sendable {
 
     public func run() async {
         publishStatus(
-            phase: "starting",
+            phase: .starting,
             message: "Looking for iPhone Mirroring"
         )
         output.captureMode(.unavailable)
@@ -258,7 +259,7 @@ public final class MirrorCapture: @unchecked Sendable {
                 output.captureMode(.unavailable)
                 output.clearFrame()
                 publishStatus(
-                    phase: "permission",
+                    phase: .permission,
                     message: "Allow Screen Recording for Mirror Relay, then relaunch the app"
                 )
                 try? await Task.sleep(for: .seconds(2))
@@ -272,7 +273,7 @@ public final class MirrorCapture: @unchecked Sendable {
                 output.captureMode(.unavailable)
                 output.clearFrame()
                 publishStatus(
-                    phase: "waiting",
+                    phase: .waiting,
                     message: "Open iPhone Mirroring to begin"
                 )
                 try? await Task.sleep(for: .seconds(1))
@@ -306,7 +307,7 @@ public final class MirrorCapture: @unchecked Sendable {
                 nextStreamingRetryAt = .distantPast
             }
 
-            if case let .failed(message) = streamingBackend.state() {
+            if case .failed(let message) = streamingBackend.state() {
                 output.log("ScreenCaptureKit stream stopped: \(message)")
                 await stopStreamingBackend()
                 nextStreamingRetryAt = Date().addingTimeInterval(
@@ -396,7 +397,7 @@ public final class MirrorCapture: @unchecked Sendable {
                 output.captureMode(.unavailable)
                 output.clearFrame()
                 publishStatus(
-                    phase: "reconnecting",
+                    phase: .reconnecting,
                     message: "Mirroring is visible but its next frame could not be captured"
                 )
                 try? await Task.sleep(for: .seconds(1))
@@ -404,7 +405,7 @@ public final class MirrorCapture: @unchecked Sendable {
             }
 
             publishStatus(
-                phase: "streaming",
+                phase: .streaming,
                 message: "iPhone Mirroring frames are available",
                 width: frame.width,
                 height: frame.height,
@@ -492,7 +493,7 @@ public final class MirrorCapture: @unchecked Sendable {
         guard isActive else { return }
         output.captureMode(.screenCaptureKit)
         publishStatus(
-            phase: "streaming",
+            phase: .streaming,
             message: "iPhone Mirroring frames are available",
             width: frame.width,
             height: frame.height,
@@ -545,13 +546,13 @@ public final class MirrorCapture: @unchecked Sendable {
             output.captureMode(.unavailable)
             output.clearFrame()
             publishStatus(
-                phase: "reconnecting",
+                phase: .reconnecting,
                 message: "Mirroring is visible but its next frame could not be captured"
             )
             return true
         }
         publishStatus(
-            phase: "streaming",
+            phase: .streaming,
             message: "iPhone Mirroring frames are available",
             width: frame.width,
             height: frame.height,
@@ -724,7 +725,7 @@ public final class MirrorCapture: @unchecked Sendable {
     }
 
     private func publishStatus(
-        phase: String,
+        phase: RelayPhase,
         message: String,
         width: Int? = nil,
         height: Int? = nil,
@@ -743,9 +744,7 @@ public final class MirrorCapture: @unchecked Sendable {
             message: message,
             width: width,
             height: height,
-            windowTitle: windowTitle,
-            screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
-            accessibilityAuthorized: AXIsProcessTrusted()
+            windowTitle: windowTitle
         )
     }
 }

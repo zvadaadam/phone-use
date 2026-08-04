@@ -23,11 +23,45 @@ The bundle identifier is frozen at `com.adamzvada.mirrorrelay`. Changing the
 bundle identifier or Developer ID team after release creates a new macOS code
 identity and forces users to grant privacy permissions again.
 
-- Use an Apple Development identity for repeatable local development grants.
+- Prefer Apple Development for repeatable local development grants.
+- Use `Mirror Relay Local Development`, a self-signed Code Signing identity,
+  only as a permission-stable local fallback.
 - Use one Developer ID Application identity for every public release.
 - Never publish an ad-hoc build.
 - Sign nested helpers before signing the outer app.
-- Keep hardened runtime and secure timestamps enabled.
+- Keep hardened runtime enabled; require secure timestamps for Developer ID
+  releases.
+
+## Permission-stable development builds
+
+Do not install an ad-hoc rebuild over an app that already has Screen Recording
+or Accessibility grants. An ad-hoc signature's designated requirement is its
+exact CDHash, so every changed binary is a different TCC identity.
+
+Prefer a stable identity from **Xcode → Settings → Accounts**: select your team,
+open **Manage Certificates**, then choose **+ → Apple Development**. When the
+Personal Team cannot issue another certificate, create a local-only identity in
+**Keychain Access → Certificate Assistant → Create a Certificate**:
+
+- name: `Mirror Relay Local Development`;
+- identity type: **Self-Signed Root**;
+- certificate type: **Code Signing**.
+
+The packager pins one exact certificate SHA-1 on first use. It preserves the
+installed app's available signer first, then accepts one unambiguous Apple
+Development identity or that exact local identity:
+
+```sh
+npm run signing:doctor
+npm run package:dev
+```
+
+The ignored `.mirror-relay/signing-identity-sha1` file is the local pin. Later
+builds fail if it disappears from Keychain instead of choosing a different
+identity. Deliberately removing the pin opts into a new selection and can
+require one new permission grant. Keep the bundle identifier and certificate
+unchanged. The self-signed channel proves update continuity only on the Mac
+containing its private key; it is not trusted for distribution.
 
 List available identities:
 
@@ -49,9 +83,11 @@ npm run package:app
 npm run verify:package
 ```
 
-This creates an ad-hoc signed development bundle at `dist/Mirror Relay.app`.
-Its identity changes when the code changes, so it is not suitable for testing
-permission persistence across upgrades.
+This reuses the pinned development certificate. On first use it applies the
+selection rules above; otherwise it creates an ad-hoc artifact at `dist/Mirror
+Relay.app` and prints a warning. The ad-hoc result is suitable for package
+verification only, not permission persistence testing. Use `npm run
+package:dev` for an installable development build.
 
 ## Public release
 
@@ -84,6 +120,7 @@ Before publishing a version:
 - run `npm run check`;
 - run `npm run test:smoke` against the exact installed build;
 - run `npm run test:device` with the paired physical iPhone;
+- run `npm run test:focus` with a browser frontmost;
 - install the DMG on a clean Mac account and confirm Gatekeeper acceptance;
 - grant both permissions once, relaunch, and verify `mirror-relay doctor`;
 - update from the previous signed version and confirm permissions persist;

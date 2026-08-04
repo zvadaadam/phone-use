@@ -3,9 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
+source "${SCRIPT_DIR}/signing-identity.sh"
 APP_DIR="${1:-${PROJECT_DIR}/dist/Mirror Relay.app}"
 REQUIRE_DISTRIBUTION="${MIRROR_RELAY_REQUIRE_DISTRIBUTION:-0}"
 REQUIRE_NOTARIZATION="${MIRROR_RELAY_REQUIRE_NOTARIZATION:-0}"
+REQUIRE_STABLE_SIGNING="${MIRROR_RELAY_REQUIRE_STABLE_SIGNING:-0}"
+EXPECTED_SIGNING_HASH="${MIRROR_RELAY_EXPECTED_SIGNING_HASH:-}"
 EXPECTED_VERSION=$(/usr/bin/plutil -extract version raw -o - "${PROJECT_DIR}/package.json")
 EXPECTED_BUNDLE_ID=$(/usr/libexec/PlistBuddy \
   -c "Print :CFBundleIdentifier" \
@@ -56,6 +59,31 @@ APP_SIGNATURE=$(codesign -dv --verbose=4 "${APP_DIR}" 2>&1)
 HELPER_SIGNATURE=$(codesign -dv --verbose=4 "${HELPER_EXECUTABLE}" 2>&1)
 [[ "${APP_SIGNATURE}" == *"runtime"* ]] || fail "app is missing hardened runtime"
 [[ "${HELPER_SIGNATURE}" == *"runtime"* ]] || fail "CLI helper is missing hardened runtime"
+
+if [[ "${REQUIRE_STABLE_SIGNING}" == "1" ]]; then
+  if [[ "${APP_SIGNATURE}" == *"Authority=Apple Development:"* \
+      || "${APP_SIGNATURE}" == *"Authority=Developer ID Application:"* ]]; then
+    if [[ "${HELPER_SIGNATURE}" != *"Authority=Apple Development:"* \
+        && "${HELPER_SIGNATURE}" != *"Authority=Developer ID Application:"* ]]; then
+      fail "app and CLI helper do not use the same Apple-backed signing channel"
+    fi
+  elif [[ "${APP_SIGNATURE}" == *"Authority=${MIRROR_RELAY_LOCAL_SIGN_IDENTITY}"* \
+      && "${HELPER_SIGNATURE}" == *"Authority=${MIRROR_RELAY_LOCAL_SIGN_IDENTITY}"* ]]; then
+    :
+  else
+    fail "app is not signed with a supported stable development identity"
+  fi
+  APP_LEAF_HASH="$(mirror_relay_signature_leaf_hash "${APP_DIR}")"
+  HELPER_LEAF_HASH="$(mirror_relay_signature_leaf_hash "${HELPER_EXECUTABLE}")"
+  APP_LEAF_HASH="${APP_LEAF_HASH:u}"
+  HELPER_LEAF_HASH="${HELPER_LEAF_HASH:u}"
+  [[ -n "${APP_LEAF_HASH}" && "${APP_LEAF_HASH}" == "${HELPER_LEAF_HASH}" ]] \
+    || fail "app and CLI helper do not share one stable signing certificate"
+  if [[ -n "${EXPECTED_SIGNING_HASH}" ]]; then
+    [[ "${APP_LEAF_HASH}" == "${EXPECTED_SIGNING_HASH:u}" ]] \
+      || fail "package signer does not match the selected certificate"
+  fi
+fi
 
 if [[ "${REQUIRE_DISTRIBUTION}" == "1" ]]; then
   [[ "${APP_SIGNATURE}" == *"Authority=Developer ID Application:"* ]] \

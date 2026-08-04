@@ -7,7 +7,9 @@
   "scripts": {
     "build:native": "swift build -c release --package-path native",
     "package:app": "zsh scripts/package-app.sh",
+    "package:dev": "MIRROR_RELAY_REQUIRE_STABLE_SIGNING=1 zsh scripts/package-app.sh",
     "package:release": "zsh scripts/package-release.sh",
+    "signing:doctor": "zsh scripts/signing-doctor.sh",
     "verify:package": "zsh scripts/verify-package.sh",
     "open:app": "open 'dist/Mirror Relay.app'",
     "relay": "zsh scripts/mirror-relayctl",
@@ -18,6 +20,7 @@
     "test:integration": "zsh scripts/integration-test.sh",
     "test:smoke": "zsh scripts/smoke-test.sh",
     "test:device": "zsh scripts/device-test.sh",
+    "test:focus": "zsh scripts/focus-test.sh",
     "check": "npm test && swift build -c release --package-path native -Xswiftc -warnings-as-errors && npm run package:app"
   },
   "engines": {

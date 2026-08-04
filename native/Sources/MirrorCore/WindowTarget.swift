@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 public final class WindowTarget: @unchecked Sendable {
-    public struct Snapshot: Sendable {
+    public struct Snapshot: Equatable, Sendable {
         public let windowID: CGWindowID
         public let processID: pid_t
     }
@@ -30,13 +30,13 @@ public final class WindowTarget: @unchecked Sendable {
         return snapshot
     }
 
-    public func bounds() -> CGRect? {
-        guard let snapshot = current(),
-              let windows = CGWindowListCopyWindowInfo(
+    public func bounds(for snapshot: Snapshot) -> CGRect? {
+        guard
+            let windows = CGWindowListCopyWindowInfo(
                 [.optionIncludingWindow, .excludeDesktopElements],
                 snapshot.windowID
-              ) as? [[String: Any]],
-              let rawBounds = windows.first?[kCGWindowBounds as String] as? NSDictionary
+            ) as? [[String: Any]],
+            let rawBounds = windows.first?[kCGWindowBounds as String] as? NSDictionary
         else {
             return nil
         }

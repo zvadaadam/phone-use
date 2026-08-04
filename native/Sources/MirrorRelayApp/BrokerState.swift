@@ -6,7 +6,7 @@ struct BrokerSnapshot: Codable, Sendable {
     let version: String
     let protocolVersion: Int
     let transport: String
-    let phase: String
+    let phase: RelayPhase
     let message: String
     let fps: Int
     let width: Int?
@@ -24,14 +24,20 @@ struct FrameMarker: Sendable {
     let contentHash: Int
 }
 
-final class BrokerState: BridgeOutput, @unchecked Sendable {
+final class BrokerState: CaptureOutput, @unchecked Sendable {
     private let lock = NSLock()
     private var activeTransport = "starting"
     private var activeCaptureMode = CaptureMode.unavailable
-    private var bridgeStatus = BridgeStatus(
-        phase: "starting",
-        message: "Mirror Relay is starting"
+    private var captureStatus = CaptureStatus(
+        phase: .starting,
+        message: "Looking for iPhone Mirroring"
     )
+    private var sessionState = MirroringSessionState.starting
+    private var permissions = RelayPermissions(
+        screenCaptureAuthorized: false,
+        accessibilityAuthorized: false
+    )
+    private var lastCaptureFrameAt: Date?
     private var currentFrame: Data?
     private var currentFrameCapturedAt: Date?
     private var currentFrameID: UInt64 = 0
@@ -57,35 +63,45 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
     }
 
     func frame(_ data: Data) {
-        let observers: [@Sendable (Data, UInt64) -> Void]
+        let frameObservers: [@Sendable (Data, UInt64) -> Void]
+        let statusObservers: [@Sendable (BrokerSnapshot) -> Void]
+        let snapshot: BrokerSnapshot
         let frameID: UInt64
         lock.lock()
+        lastCaptureFrameAt = Date()
+        guard sessionState == .connected else {
+            lock.unlock()
+            return
+        }
+        let wasStreaming = effectiveStatusLocked().phase == .streaming
         currentFrame = data
-        currentFrameCapturedAt = Date()
+        currentFrameCapturedAt = lastCaptureFrameAt
         currentFrameID &+= 1
         currentFrameHash = data.hashValue
         frameID = currentFrameID
         framesThisSecond += 1
-        observers = Array(frameObservers.values)
+        snapshot = snapshotLocked()
+        frameObservers =
+            snapshot.phase == .streaming
+            ? Array(self.frameObservers.values) : []
+        statusObservers = wasStreaming ? [] : Array(self.statusObservers.values)
         lock.unlock()
-        for observer in observers {
+        for observer in frameObservers {
             observer(data, frameID)
+        }
+        for observer in statusObservers {
+            observer(snapshot)
         }
     }
 
     func clearFrame() {
         lock.lock()
-        currentFrame = nil
-        currentFrameCapturedAt = nil
-        currentFrameHash = 0
-        framesThisSecond = 0
-        currentFPS = 0
+        lastCaptureFrameAt = nil
+        clearPublishedFrameLocked()
         let snapshot = snapshotLocked()
         let observers = Array(statusObservers.values)
         lock.unlock()
-        for observer in observers {
-            observer(snapshot)
-        }
+        notify(observers, snapshot: snapshot)
     }
 
     func captureMode(_ mode: CaptureMode) {
@@ -98,31 +114,77 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         let snapshot = snapshotLocked()
         let observers = Array(statusObservers.values)
         lock.unlock()
-        for observer in observers {
-            observer(snapshot)
-        }
+        notify(observers, snapshot: snapshot)
     }
 
-    func status(_ status: BridgeStatus) {
+    func status(_ status: CaptureStatus) {
         lock.lock()
-        bridgeStatus = status
+        guard captureStatus != status else {
+            lock.unlock()
+            return
+        }
+        captureStatus = status
+        if status.phase != .streaming {
+            clearPublishedFrameLocked()
+        }
         let snapshot = snapshotLocked()
         let observers = Array(statusObservers.values)
         lock.unlock()
-        for observer in observers {
-            observer(snapshot)
+        notify(observers, snapshot: snapshot)
+    }
+
+    func updateSession(_ session: MirroringSessionState) {
+        lock.lock()
+        guard sessionState != session else {
+            lock.unlock()
+            return
         }
+        sessionState = session
+        clearPublishedFrameLocked()
+        let snapshot = snapshotLocked()
+        let observers = Array(statusObservers.values)
+        lock.unlock()
+        notify(observers, snapshot: snapshot)
+    }
+
+    func updatePermissions(_ newPermissions: RelayPermissions) {
+        lock.lock()
+        guard permissions != newPermissions else {
+            lock.unlock()
+            return
+        }
+        permissions = newPermissions
+        if !newPermissions.screenCaptureAuthorized
+            || !newPermissions.accessibilityAuthorized
+        {
+            clearPublishedFrameLocked()
+        }
+        let snapshot = snapshotLocked()
+        let observers = Array(statusObservers.values)
+        lock.unlock()
+        notify(observers, snapshot: snapshot)
+    }
+
+    func captureIsReady(
+        maxAge: TimeInterval = CapturePolicy.frameFreshnessInterval
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return captureStatus.phase == .streaming
+            && lastCaptureFrameAt.map { Date().timeIntervalSince($0) <= maxAge } == true
     }
 
     func setTransport(_ transport: String) {
         lock.lock()
+        guard activeTransport != transport else {
+            lock.unlock()
+            return
+        }
         activeTransport = transport
         let snapshot = snapshotLocked()
         let observers = Array(statusObservers.values)
         lock.unlock()
-        for observer in observers {
-            observer(snapshot)
-        }
+        notify(observers, snapshot: snapshot)
     }
 
     func log(_ message: String) {
@@ -134,9 +196,7 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         let snapshot = snapshotLocked()
         let observers = Array(statusObservers.values)
         lock.unlock()
-        for observer in observers {
-            observer(snapshot)
-        }
+        notify(observers, snapshot: snapshot)
     }
 
     func snapshot() -> BrokerSnapshot {
@@ -150,7 +210,7 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
     ) -> (data: Data, id: UInt64)? {
         lock.lock()
         defer { lock.unlock() }
-        guard bridgeStatus.phase == "streaming",
+        guard effectiveStatusLocked().phase == .streaming,
             let currentFrame,
             let currentFrameCapturedAt,
             Date().timeIntervalSince(currentFrameCapturedAt) <= maxAge
@@ -172,7 +232,7 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
         lock.lock()
         frameObservers[id] = observer
         let existing: (Data, UInt64)?
-        if bridgeStatus.phase == "streaming",
+        if effectiveStatusLocked().phase == .streaming,
             let currentFrame,
             let currentFrameCapturedAt,
             Date().timeIntervalSince(currentFrameCapturedAt)
@@ -214,34 +274,67 @@ final class BrokerState: BridgeOutput, @unchecked Sendable {
 
     private func rollFPS() {
         lock.lock()
-        currentFPS = framesThisSecond
+        let isStreaming = effectiveStatusLocked().phase == .streaming
+        currentFPS = isStreaming ? framesThisSecond : 0
         framesThisSecond = 0
         let snapshot = snapshotLocked()
         let observers = Array(statusObservers.values)
         lock.unlock()
-        for observer in observers {
-            observer(snapshot)
-        }
+        notify(observers, snapshot: snapshot)
+    }
+
+    private func clearPublishedFrameLocked() {
+        currentFrame = nil
+        currentFrameCapturedAt = nil
+        currentFrameHash = 0
+        framesThisSecond = 0
+        currentFPS = 0
     }
 
     private func snapshotLocked() -> BrokerSnapshot {
-        BrokerSnapshot(
+        let status = effectiveStatusLocked()
+        let isStreaming = status.phase == .streaming
+        return BrokerSnapshot(
             version: RelayProtocolMetadata.shortVersion(),
             protocolVersion: RelayProtocolMetadata.currentVersion,
             transport: activeTransport,
-            phase: bridgeStatus.phase,
-            message: bridgeStatus.message,
-            fps: currentFPS,
-            width: bridgeStatus.width,
-            height: bridgeStatus.height,
+            phase: status.phase,
+            message: status.message,
+            fps: isStreaming ? currentFPS : 0,
+            width: status.width,
+            height: status.height,
             frameID: currentFrameID,
-            frameAgeMs: currentFrameCapturedAt.map {
-                max(0, Int(Date().timeIntervalSince($0) * 1_000))
-            },
+            frameAgeMs: isStreaming
+                ? currentFrameCapturedAt.map {
+                    max(0, Int(Date().timeIntervalSince($0) * 1_000))
+                } : nil,
             captureMode: activeCaptureMode,
-            screenCaptureAuthorized: bridgeStatus.screenCaptureAuthorized ?? false,
-            accessibilityAuthorized: bridgeStatus.accessibilityAuthorized ?? false,
+            screenCaptureAuthorized: permissions.screenCaptureAuthorized,
+            accessibilityAuthorized: permissions.accessibilityAuthorized,
             logs: Array(recentLogs.suffix(20))
         )
+    }
+
+    private func effectiveStatusLocked() -> CaptureStatus {
+        let hasFreshPublishedFrame =
+            currentFrame != nil
+            && currentFrameCapturedAt.map {
+                Date().timeIntervalSince($0) <= CapturePolicy.frameFreshnessInterval
+            } == true
+        return RelayStatusReducer.reduce(
+            session: sessionState,
+            capture: captureStatus,
+            permissions: permissions,
+            hasFreshPublishedFrame: hasFreshPublishedFrame
+        )
+    }
+
+    private func notify(
+        _ observers: [@Sendable (BrokerSnapshot) -> Void],
+        snapshot: BrokerSnapshot
+    ) {
+        for observer in observers {
+            observer(snapshot)
+        }
     }
 }

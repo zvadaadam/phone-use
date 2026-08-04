@@ -3,13 +3,38 @@ set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
+source "${SCRIPT_DIR}/signing-identity.sh"
 APP_DIR="${PROJECT_DIR}/dist/Mirror Relay.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
-IDENTITY="${MIRROR_RELAY_SIGN_IDENTITY:--}"
+REQUESTED_IDENTITY="${MIRROR_RELAY_SIGN_IDENTITY:-}"
+REQUIRE_STABLE_SIGNING="${MIRROR_RELAY_REQUIRE_STABLE_SIGNING:-0}"
 PACKAGE_VERSION=$(/usr/bin/plutil -extract version raw -o - "${PROJECT_DIR}/package.json")
 PLIST_VERSION=$(/usr/libexec/PlistBuddy \
   -c "Print :CFBundleShortVersionString" \
   "${PROJECT_DIR}/native/App/Info.plist")
+
+if [[ -n "${REQUESTED_IDENTITY}" ]]; then
+  if [[ "${REQUIRE_STABLE_SIGNING}" == "1" ]]; then
+    IDENTITY=$(mirror_relay_select_development_identity "${REQUESTED_IDENTITY}")
+  else
+    IDENTITY=$(mirror_relay_resolve_identity_hash "${REQUESTED_IDENTITY}")
+  fi
+else
+  IDENTITY=$(mirror_relay_select_development_identity)
+  IDENTITY="${IDENTITY:--}"
+fi
+IDENTITY_LABEL="${IDENTITY}"
+if [[ "${IDENTITY}" != "-" ]]; then
+  IDENTITY_LABEL=$(mirror_relay_identity_name_for_hash "${IDENTITY}")
+fi
+
+if [[ "${REQUIRE_STABLE_SIGNING}" == "1" && "${IDENTITY}" == "-" ]]; then
+  print -u2 "Stable development signing is required, but no supported identity is available."
+  print -u2 "Install an Apple Development identity or create the local Code Signing identity"
+  print -u2 "'${MIRROR_RELAY_LOCAL_SIGN_IDENTITY}' in Keychain Access."
+  print -u2 "Run npm run signing:doctor after the certificate is installed."
+  exit 1
+fi
 
 if [[ "${PACKAGE_VERSION}" != "${PLIST_VERSION}" ]]; then
   print -u2 "Version mismatch: package.json=${PACKAGE_VERSION}, Info.plist=${PLIST_VERSION}"
@@ -32,15 +57,20 @@ ditto "${PROJECT_DIR}/public" "${CONTENTS_DIR}/Resources/public"
 chmod 755 "${CONTENTS_DIR}/MacOS/Mirror Relay" "${CONTENTS_DIR}/Helpers/mirror-relay"
 
 sign_args=(--force --options runtime --sign "${IDENTITY}")
-if [[ "${IDENTITY}" != "-" ]]; then
+if [[ "${IDENTITY_LABEL}" == "Developer ID Application:"* ]]; then
   sign_args+=(--timestamp)
 fi
 codesign "${sign_args[@]}" "${CONTENTS_DIR}/Helpers/mirror-relay"
 codesign "${sign_args[@]}" "${APP_DIR}"
-"${SCRIPT_DIR}/verify-package.sh" "${APP_DIR}"
+MIRROR_RELAY_REQUIRE_STABLE_SIGNING="${REQUIRE_STABLE_SIGNING}" \
+MIRROR_RELAY_EXPECTED_SIGNING_HASH="${IDENTITY/-/}" \
+  "${SCRIPT_DIR}/verify-package.sh" "${APP_DIR}"
 
 print "Packaged ${APP_DIR}"
 print "CLI: ${CONTENTS_DIR}/Helpers/mirror-relay"
 if [[ "${IDENTITY}" == "-" ]]; then
-  print "Note: ad-hoc signed for local testing. Use MIRROR_RELAY_SIGN_IDENTITY with a stable Apple Development or Developer ID identity to preserve permissions across rebuilds."
+  print "WARNING: ad-hoc signed. Its code identity changes on every rebuild, so macOS privacy grants will not persist."
+  print "Use npm run package:dev before installing a build used with Screen Recording or Accessibility."
+else
+  print "Signed with stable identity: ${IDENTITY_LABEL} (${IDENTITY})"
 fi

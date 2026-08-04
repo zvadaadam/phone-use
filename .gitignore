@@ -5,6 +5,7 @@ dist/
 .build/
 .env
 .env.*
+.mirror-relay/
 coverage/
 .DS_Store
 *.log

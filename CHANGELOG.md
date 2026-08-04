@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+- Added permission-stable development packaging that prefers Apple Development,
+  supports an exact local self-signed fallback, and fails closed when
+  `package:dev` would fall back to an ad-hoc signature.
+- Added a signing doctor with exact Xcode certificate setup guidance and made
+  ad-hoc package output explicitly warn against replacing a granted install.
+- Pinned the exact local development certificate so new or reordered Keychain
+  identities cannot silently change the app's macOS privacy identity.
+- Replaced the stale iPhone Mirroring child-count heuristic with one fail-closed
+  session inspector and a debounced state machine that combines Accessibility
+  evidence with fresh capture evidence.
+- Replaced foreground HID input with Codex-style AppKit event envelopes posted
+  directly to the iPhone Mirroring process, including the private WindowServer
+  metadata required for covered and off-current-Space windows.
+- Removed Mirroring activation, Space switching, window raising, and Mac cursor
+  movement from tap, swipe, typing, and system-shortcut commands.
+- Added continuous foreground sampling for live control tests so even a brief
+  focus handoff fails the acceptance gate.
+- Removed unconditional iPhone Mirroring activation from session health checks;
+  Connect and Resume are pressed through background Accessibility actions.
+- Kept window-geometry validation exclusive to pointer gestures; keyboard,
+  typing, and system shortcuts validate identity without depending on window
+  geometry.
+- Added bounded stable-window sampling before pointer gestures so resizing or
+  rotation cannot redirect a command mid-flight.
+- Recognized Apple's accessibility-opaque live phone surface as connected while
+  continuing to treat visible status, error, and action overlays as paused.
+- Made frame publication atomic with session truth: pre-connection frames are
+  dropped, every disconnect clears published frame/FPS state, and reconnect
+  requires a newly captured frame before observation reopens.
+
 ## 0.8.0 — 2026-08-01
 
 - Moved the Swift CLI from `Contents/Resources` to Apple’s supported

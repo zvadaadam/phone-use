@@ -40,6 +40,11 @@ let package = Package(
             name: "MirrorRelayProtocolTests",
             dependencies: ["MirrorRelayProtocol"],
             path: "Tests/MirrorRelayProtocolTests"
+        ),
+        .testTarget(
+            name: "MirrorRelayAppTests",
+            dependencies: ["MirrorRelayApp", "MirrorCore"],
+            path: "Tests/MirrorRelayAppTests"
         )
     ],
     swiftLanguageModes: [.v5]

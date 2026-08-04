@@ -52,7 +52,7 @@ final class BridgeCoordinator: @unchecked Sendable {
                 beforeFrameID: before.id,
                 afterFrameID: after.id,
                 screenChanged: after.contentHash != before.contentHash,
-                phase: snapshot.phase,
+                phase: snapshot.phase.rawValue,
                 message: snapshot.message
             )
         }

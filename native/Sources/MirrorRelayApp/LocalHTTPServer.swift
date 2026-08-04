@@ -141,7 +141,7 @@ final class LocalHTTPServer: @unchecked Sendable {
                     version: snapshot.version,
                     protocolVersion: snapshot.protocolVersion,
                     transport: snapshot.transport,
-                    phase: snapshot.phase,
+                    phase: snapshot.phase.rawValue,
                     screenCaptureAuthorized: snapshot.screenCaptureAuthorized,
                     accessibilityAuthorized: snapshot.accessibilityAuthorized
                 )

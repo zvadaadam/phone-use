@@ -562,6 +562,14 @@ body[data-live="true"] .empty-state {
   font-size: 10px;
 }
 
+.focus-note {
+  margin: 10px 0 0;
+  color: var(--quiet);
+  font-size: 9px;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .text-panel label {
   display: block;
   margin-bottom: 8px;

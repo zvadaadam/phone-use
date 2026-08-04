@@ -7,7 +7,7 @@ control a real, powered-on iPhone through Apple’s iPhone Mirroring app.
 agent CLI / authenticated dashboard
         ↕ HTTP on 127.0.0.1:8747
 Mirror Relay menu-bar app
-        ↕ ScreenCaptureKit + verified HID input
+        ↕ ScreenCaptureKit + verified process-targeted input
 Apple iPhone Mirroring
         ↕ Apple Continuity
 nearby, powered-on, locked iPhone
@@ -17,7 +17,8 @@ The browser does not embed Apple’s private UI and Mirror Relay does not patch 
 inject into Apple processes. It streams only the authorized iPhone Mirroring
 window through Apple’s public ScreenCaptureKit API, encodes frames in memory,
 maps normalized coordinates to that window, verifies the target before every
-input event, and posts ordinary macOS HID events.
+input event, and posts AppKit/CoreGraphics events directly to the Mirroring
+process.
 
 ## Product boundary
 
@@ -48,13 +49,21 @@ Requirements:
 - macOS 15 or newer;
 - Apple iPhone Mirroring already paired with the iPhone;
 - Xcode command-line tools for source builds;
+- an Apple Development or local self-signed Code Signing identity for
+  permission-persistent source builds;
 - Node.js 20 or newer for tests and packaging.
 
-Build the local app:
+Prefer Apple Development from **Xcode → Settings → Accounts → Manage
+Certificates**. If a Personal Team certificate is unavailable, create a
+local-only identity in **Keychain Access → Certificate Assistant → Create a
+Certificate** with the name `Mirror Relay Local Development`, identity type
+**Self-Signed Root**, and certificate type **Code Signing**. Verify the selected
+channel and build the permission-stable app:
 
 ```sh
 npm install
-npm run check
+npm run signing:doctor
+npm run package:dev
 ```
 
 Copy `dist/Mirror Relay.app` to `/Applications`, open it, and grant the exact
@@ -63,9 +72,18 @@ installed app:
 - **Privacy & Security → Screen & System Audio Recording**
 - **Privacy & Security → Accessibility**
 
-Relaunch Mirror Relay after changing either permission. Ad-hoc local builds can
-need their grants refreshed when the binary changes. A Developer ID-signed
-release preserves a stable signing identity.
+Relaunch Mirror Relay after changing either permission. The signing doctor pins
+the exact certificate SHA-1 in the ignored `.mirror-relay` state directory, and
+future development builds fail instead of silently switching certificates.
+Keep the bundle ID and that pinned certificate unchanged. Apple Development and
+the local self-signed identity both preserve one local designated requirement;
+Developer ID-signed releases do the same for customers. The self-signed channel
+is local development only and is not suitable for distribution.
+
+`npm run package:app` remains available for CI and isolated package checks when
+no certificate is installed, but its ad-hoc output must not replace a granted
+development install: every changed ad-hoc binary has a new CDHash and therefore
+a new macOS privacy identity.
 
 Public releases are distributed as a notarized `Mirror Relay-<version>.dmg`.
 Drag the app to the Applications shortcut in the disk image. The app, its Swift
@@ -110,6 +128,15 @@ Coordinates are normalized from `0` to `1`. Tap and swipe are atomic commands;
 the broker serializes all open, control, and close operations. Action responses
 include frame IDs and whether a fresh frame changed after the command.
 
+### Mac focus behavior
+
+Mirror Relay never activates or raises iPhone Mirroring, switches Spaces, or
+moves the Mac pointer. Pointer events begin as an AppKit `NSEvent`, receive the
+target Mirroring window's WindowServer metadata, and are posted directly to the
+Mirroring process. Keyboard and scroll events use the same process-targeted
+route. This is the event envelope used by Codex computer use and remains
+addressable while Mirroring is covered or on another Space.
+
 `npm start` opens the authenticated dashboard through the installed CLI.
 
 ## Local API
@@ -152,8 +179,8 @@ cannot be replayed and dashboard sessions disappear when Mirror Relay quits.
   DNS-rebinding origin from reaching the broker.
 - Commands are bounded and validated, and mutations run in FIFO order.
 - Pointer gestures are sent as one tap or swipe instead of interleaved phases.
-- Input revalidates the target PID, window ID, bounds, frontmost application,
-  and topmost window before every event and throughout a swipe.
+- Input revalidates the target PID, window ID, and stable bounds before every
+  event and throughout a swipe. It never activates another Mac application.
 - Capture is window-only and fails closed; it never falls back to a screen
   region that could contain unrelated Mac windows.
 - The primary capture path is an in-memory ScreenCaptureKit stream capped at 15
@@ -161,8 +188,10 @@ cannot be replayed and dashboard sessions disappear when Mirror Relay quits.
   while using an exact-window `screencapture -l` fallback. The same hardened
   fallback supplies heartbeat frames when ScreenCaptureKit intentionally idles
   on an unchanged screen.
-- Closing or losing the session clears the cached frame, and observations older
-  than three seconds are rejected.
+- One debounced session state machine combines Accessibility evidence with a
+  fresh capture signal. Frames are dropped until that state is stable; closing
+  or losing the session atomically clears the cached frame and FPS, and a new
+  post-reconnect frame is required before observation reopens.
 - No LAN listener, cloud relay, passcode handling, jailbreak, private
   entitlement injection, or WebDriverAgent server is included.
 
@@ -184,6 +213,7 @@ paired phone. Do not proxy or tunnel port 8747.
 npm test                 # Node, Swift, and isolated broker integration
 npm run test:smoke       # exact installed app
 npm run test:device      # opt-in live paired-iPhone stream/fps check
+npm run test:focus       # opt-in live command with continuous no-focus sampling
 npm run verify:package   # bundle layout, versions, links, and signatures
 npm run check            # tests, warnings-as-errors release build, package
 ```
@@ -193,11 +223,17 @@ single-use dashboard exchange, hardened cookies, host/origin rejection,
 protocol metadata, validation, and token permissions. Native tests cover
 command validation, operation
 serialization, fallback capture commands, stream frame-rate gating and sizing,
-and Mirroring-window selection.
+Mirroring-window selection, debounced session-state evidence, atomic frame
+publication, stable geometry, and process-targeted event metadata.
 
 ## Release packaging
 
-`npm run package:app` produces an ad-hoc signed local-development app.
+`npm run package:dev` pins and uses one exact certificate SHA-1. For a first
+build it preserves the installed app's available signer, otherwise accepts one
+unambiguous Apple Development identity or the exact `Mirror Relay Local
+Development` local fallback. It fails if the pinned signer disappears or a
+choice would be ambiguous. `npm run package:app` uses that same pin, otherwise
+it produces an ad-hoc artifact and prints a permission-persistence warning.
 
 A distributable build must use Apple Developer credentials:
 

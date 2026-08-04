@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import MirrorCore
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -99,11 +100,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-        state.status(
-            phase: "permission",
-            message: "Complete the one-time macOS permissions, then relaunch Mirror Relay",
-            screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
-            accessibilityAuthorized: AXIsProcessTrusted()
+        state.updatePermissions(
+            RelayPermissions(
+                screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
+                accessibilityAuthorized: AXIsProcessTrusted()
+            )
         )
     }
 
@@ -230,15 +231,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func friendlyPhase(_ phase: String) -> String {
+    private func friendlyPhase(_ phase: RelayPhase) -> String {
         switch phase {
-        case "streaming": return "Connected"
-        case "binding": return "Binding"
-        case "permission": return "Needs permission"
-        case "waiting": return "Waiting for iPhone"
-        case "reconnecting": return "Reconnecting"
-        case "starting": return "Starting"
-        default: return phase.capitalized
+        case .streaming: return "Connected"
+        case .permission: return "Needs permission"
+        case .waiting: return "Waiting for iPhone"
+        case .reconnecting: return "Reconnecting"
+        case .starting: return "Starting"
         }
     }
 
