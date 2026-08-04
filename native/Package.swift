@@ -3,48 +3,48 @@
 import PackageDescription
 
 let package = Package(
-    name: "MirrorRelay",
+    name: "PhoneUse",
     platforms: [
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "mirror-relay", targets: ["MirrorRelayApp"]),
-        .executable(name: "mirror-relayctl", targets: ["MirrorRelayCLI"])
+        .executable(name: "phone-use-app", targets: ["PhoneUseApp"]),
+        .executable(name: "phone-use", targets: ["PhoneUseCLI"])
     ],
     targets: [
         .target(
-            name: "MirrorRelayProtocol",
-            path: "Sources/MirrorRelayProtocol"
+            name: "PhoneUseProtocol",
+            path: "Sources/PhoneUseProtocol"
         ),
         .target(
-            name: "MirrorCore",
-            dependencies: ["MirrorRelayProtocol"],
-            path: "Sources/MirrorCore"
+            name: "PhoneUseCore",
+            dependencies: ["PhoneUseProtocol"],
+            path: "Sources/PhoneUseCore"
         ),
         .executableTarget(
-            name: "MirrorRelayApp",
-            dependencies: ["MirrorCore", "MirrorRelayProtocol"],
-            path: "Sources/MirrorRelayApp"
+            name: "PhoneUseApp",
+            dependencies: ["PhoneUseCore", "PhoneUseProtocol"],
+            path: "Sources/PhoneUseApp"
         ),
         .executableTarget(
-            name: "MirrorRelayCLI",
-            dependencies: ["MirrorRelayProtocol"],
-            path: "Sources/MirrorRelayCLI"
+            name: "PhoneUseCLI",
+            dependencies: ["PhoneUseProtocol"],
+            path: "Sources/PhoneUseCLI"
         ),
         .testTarget(
-            name: "MirrorCoreTests",
-            dependencies: ["MirrorCore", "MirrorRelayProtocol"],
-            path: "Tests/MirrorCoreTests"
+            name: "PhoneUseCoreTests",
+            dependencies: ["PhoneUseCore", "PhoneUseProtocol"],
+            path: "Tests/PhoneUseCoreTests"
         ),
         .testTarget(
-            name: "MirrorRelayProtocolTests",
-            dependencies: ["MirrorRelayProtocol"],
-            path: "Tests/MirrorRelayProtocolTests"
+            name: "PhoneUseProtocolTests",
+            dependencies: ["PhoneUseProtocol"],
+            path: "Tests/PhoneUseProtocolTests"
         ),
         .testTarget(
-            name: "MirrorRelayAppTests",
-            dependencies: ["MirrorRelayApp", "MirrorCore"],
-            path: "Tests/MirrorRelayAppTests"
+            name: "PhoneUseAppTests",
+            dependencies: ["PhoneUseApp", "PhoneUseCore"],
+            path: "Tests/PhoneUseAppTests"
         )
     ],
     swiftLanguageModes: [.v5]

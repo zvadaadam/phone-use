@@ -1,0 +1,16 @@
+#!/bin/zsh
+set -euo pipefail
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
+INSTALLED_CLI="/Applications/Phone Use.app/Contents/Helpers/phone-use"
+LOCAL_CLI="${PROJECT_DIR}/dist/Phone Use.app/Contents/Helpers/phone-use"
+
+if [[ -x "${INSTALLED_CLI}" ]]; then
+  exec "${INSTALLED_CLI}" "$@"
+fi
+if [[ -x "${LOCAL_CLI}" ]]; then
+  exec "${LOCAL_CLI}" "$@"
+fi
+print -u2 "Phone Use is not packaged. Run: npm run package:app"
+exit 1

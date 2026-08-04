@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-08-04
 
+- Rebranded the repository, macOS app, Swift modules, CLI, dashboard, scripts,
+  package metadata, release artifacts, and persisted state namespace to Phone
+  Use. Added one-time token and signing-pin migration while retaining the frozen
+  bundle identifier and pinned signer so existing macOS privacy grants survive.
 - Added permission-stable development packaging that prefers Apple Development,
   supports an exact local self-signed fallback, and fails closed when
   `package:dev` would fall back to an ad-hoc signature.

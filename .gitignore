@@ -5,6 +5,7 @@ dist/
 .build/
 .env
 .env.*
+.phone-use/
 .mirror-relay/
 coverage/
 .DS_Store

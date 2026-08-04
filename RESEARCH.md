@@ -7,7 +7,7 @@ Review updated: 2026-08-04.
 Use [`leeguooooo/iphone-use`](https://github.com/leeguooooo/iphone-use) as the
 primary high-performance capture reference and
 [`jfarcand/mirroir-mcp`](https://github.com/jfarcand/mirroir-mcp) as the
-pixel-control and agent-tool reference. Keep Mirror Relay's smaller
+pixel-control and agent-tool reference. Keep Phone Use's smaller
 authenticated loopback API and dashboard.
 
 ## `leeguooooo/iphone-use`
@@ -23,7 +23,7 @@ Best capture-performance evidence.
   proved insufficient in that implementation.
 - Includes a single-controller lease and a broader LAN/WebRTC product surface.
 
-Mirror Relay adopts the public ScreenCaptureKit window stream, but not WebRTC
+Phone Use adopts the public ScreenCaptureKit window stream, but not WebRTC
 or LAN access. In-memory JPEG over the existing authenticated loopback MJPEG
 route is substantially smaller, preserves the security model, and measured
 12–14 end-to-end fps on this Mac. H.264/WebRTC remains a later option if remote
@@ -56,7 +56,7 @@ Local verification:
   library was absent, so the release binary was more reliable than a clean
   source build on this machine.
 
-Mirror Relay adopts its window-classification and phased-scroll lessons, not
+Phone Use adopts its window-classification and phased-scroll lessons, not
 its process-per-frame capture path, foreground HID delivery, or full 33-tool
 MCP surface. Local testing found a narrower background route: start pointer
 events as AppKit `NSEvent` envelopes, add the destination window's WindowServer
@@ -82,7 +82,7 @@ Risks:
 - can be invalidated by macOS updates;
 - broad eligibility edits are unrelated to agent control.
 
-Mirror Relay does not run or embed it. If the native app already opens and
+Phone Use does not run or embed it. If the native app already opens and
 connects, there is no reason to touch the eligibility database.
 
 ## `Dennisjoch/iPhoneMirroring`
@@ -97,7 +97,7 @@ It combines:
 
 It confirms why WebDriverAgent is not part of the launch product: the route is
 more deterministic for a test lab, but adds onboarding and does not provide the
-seamless locked-iPhone session Mirror Relay is designed around.
+seamless locked-iPhone session Phone Use is designed around.
 
 ## Other relevant projects
 

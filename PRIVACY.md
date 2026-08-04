@@ -1,6 +1,6 @@
 # Privacy
 
-Mirror Relay processes the visible contents of Apple’s iPhone Mirroring window
+Phone Use processes the visible contents of Apple’s iPhone Mirroring window
 locally on the Mac.
 
 - Frames are served only through the authenticated loopback API.
@@ -17,6 +17,6 @@ locally on the Mac.
 - No analytics, telemetry, cloud service, or third-party device-control server
   is included.
 
-Mirror Relay requires Screen Recording and Accessibility because those are the
+Phone Use requires Screen Recording and Accessibility because those are the
 macOS permissions needed to capture and control Apple’s Mirroring window. Those
 permissions can be revoked at any time in System Settings.

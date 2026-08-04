@@ -1,9 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
-CLI="/Applications/Mirror Relay.app/Contents/Helpers/mirror-relay"
+CLI="/Applications/Phone Use.app/Contents/Helpers/phone-use"
 MIRRORING_BUNDLE_ID="com.apple.ScreenContinuity"
-TEMP_DIR=$(mktemp -d /tmp/mirror-relay-focus.XXXXXX)
+TEMP_DIR=$(mktemp -d /tmp/phone-use-focus.XXXXXX)
 SAMPLE_FILE="${TEMP_DIR}/frontmost.tsv"
 STOP_FILE="${TEMP_DIR}/stop"
 SAMPLER_PID=""
@@ -20,7 +20,7 @@ cleanup() {
     wait "${SAMPLER_PID}" 2>/dev/null || true
   fi
   case "${TEMP_DIR}" in
-    /tmp/mirror-relay-focus.*) rm -rf "${TEMP_DIR}" ;;
+    /tmp/phone-use-focus.*) rm -rf "${TEMP_DIR}" ;;
   esac
 }
 trap cleanup EXIT INT TERM
@@ -61,7 +61,7 @@ sample_frontmost_processes() {
 }
 
 if [[ ! -x "${CLI}" ]]; then
-  print -u2 "FAIL: install Mirror Relay in /Applications first"
+  print -u2 "FAIL: install Phone Use in /Applications first"
   exit 1
 fi
 

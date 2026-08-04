@@ -6,7 +6,7 @@ Security fixes are applied to the latest release only.
 
 ## Boundary
 
-Mirror Relay is intentionally local:
+Phone Use is intentionally local:
 
 - the API listens only on `127.0.0.1`;
 - requests with any other HTTP `Host` are rejected to prevent DNS rebinding;
@@ -26,5 +26,5 @@ rejects incompatible or stale broker versions before issuing commands.
 ## Reporting
 
 Do not include phone screenshots, tokens, credentials, or private message
-content in a report. Provide the Mirror Relay version, macOS version, a minimal
+content in a report. Provide the Phone Use version, macOS version, a minimal
 reproduction, and sanitized logs to the project owner through a private channel.

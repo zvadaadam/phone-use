@@ -5,7 +5,7 @@
 Use Apple iPhone Mirroring as the primary locked-device transport, but treat it
 as a controlled Mac application rather than an SDK.
 
-Mirror Relay can wrap the native app with public Mac mechanisms:
+Phone Use can wrap the native app with public Mac mechanisms:
 
 1. launch and classify the `com.apple.ScreenContinuity` process;
 2. identify its real phone window using WindowServer and Accessibility data;
@@ -39,7 +39,7 @@ The remaining limitations are:
   with undocumented WindowServer fields;
 - the Apple Continuity transport itself has no public third-party SDK.
 
-Mirror Relay 0.8 uses the public stream for its primary capture path and keeps
+Phone Use 0.8 uses the public stream for its primary capture path and keeps
 the exact-window screenshot path as a fail-safe. The earlier WebDriverAgent
 transport remains removed because it requires an unlocked development device
 and a separately signed device server.
@@ -56,7 +56,7 @@ Proven with the same capture and input code used by the broker:
 - captured ten frames with five distinct visual states, with the first change
   occurring immediately after the tap.
 - opened a real locked-device session through the exact installed
-  `/Applications/Mirror Relay.app`;
+  `/Applications/Phone Use.app`;
 - captured the physical iPhone's live 708×1562 screen through the authenticated
   `/api/observe` endpoint;
 - tapped the ChatGPT icon by normalized pixel coordinates and observed the app
@@ -109,13 +109,13 @@ Proven with the same capture and input code used by the broker:
 ## Deliberate non-goal
 
 USB/XCUITest and WebDriverAgent remain useful for test labs that need semantic
-iOS UI data. They are not included in Mirror Relay because they require
+iOS UI data. They are not included in Phone Use because they require
 Developer Mode, signing, an unlocked device, and an additional device-side
 control server.
 
 ## Safety boundary
 
-Mirror Relay does not patch iPhone Mirroring, inject into Apple processes,
+Phone Use does not patch iPhone Mirroring, inject into Apple processes,
 modify the region eligibility database, handle passcodes, or bypass Apple
 security. It controls only the user's visible, normally authorized Mac session
 and keeps its API loopback-only.

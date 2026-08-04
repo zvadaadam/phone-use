@@ -1,14 +1,14 @@
-# Mirror Relay Packaging
+# Phone Use Packaging
 
-Mirror Relay ships as one native, menu-bar macOS app. The main Swift executable
+Phone Use ships as one native, menu-bar macOS app. The main Swift executable
 owns Screen Recording and Accessibility consent. Its embedded Swift CLI is a
 loopback protocol client and must never perform capture or input itself.
 
 ```text
-Mirror Relay.app/
+Phone Use.app/
 └── Contents/
-    ├── MacOS/Mirror Relay
-    ├── Helpers/mirror-relay
+    ├── MacOS/Phone Use
+    ├── Helpers/phone-use
     ├── Resources/public/
     └── Info.plist
 ```
@@ -24,8 +24,10 @@ bundle identifier or Developer ID team after release creates a new macOS code
 identity and forces users to grant privacy permissions again.
 
 - Prefer Apple Development for repeatable local development grants.
-- Use `Mirror Relay Local Development`, a self-signed Code Signing identity,
+- Use `Phone Use Local Development`, a self-signed Code Signing identity,
   only as a permission-stable local fallback.
+- Continue accepting a pinned `Mirror Relay Local Development` identity for
+  upgrades from the pre-rebrand app; do not rotate it automatically.
 - Use one Developer ID Application identity for every public release.
 - Never publish an ad-hoc build.
 - Sign nested helpers before signing the outer app.
@@ -43,7 +45,7 @@ open **Manage Certificates**, then choose **+ → Apple Development**. When the
 Personal Team cannot issue another certificate, create a local-only identity in
 **Keychain Access → Certificate Assistant → Create a Certificate**:
 
-- name: `Mirror Relay Local Development`;
+- name: `Phone Use Local Development`;
 - identity type: **Self-Signed Root**;
 - certificate type: **Code Signing**.
 
@@ -56,12 +58,17 @@ npm run signing:doctor
 npm run package:dev
 ```
 
-The ignored `.mirror-relay/signing-identity-sha1` file is the local pin. Later
+The ignored `.phone-use/signing-identity-sha1` file is the local pin. Later
 builds fail if it disappears from Keychain instead of choosing a different
 identity. Deliberately removing the pin opts into a new selection and can
 require one new permission grant. Keep the bundle identifier and certificate
 unchanged. The self-signed channel proves update continuity only on the Mac
 containing its private key; it is not trusted for distribution.
+
+On the first build after the rename, the packager atomically copies a valid pin
+from `.mirror-relay/signing-identity-sha1` when the new pin does not exist. The
+runtime likewise copies the existing token from `Application Support/Mirror
+Relay` into `Application Support/Phone Use` without rotating it.
 
 List available identities:
 
@@ -73,7 +80,7 @@ Store notarization credentials in Keychain rather than a source file or shell
 history:
 
 ```sh
-xcrun notarytool store-credentials mirror-relay-notary
+xcrun notarytool store-credentials phone-use-notary
 ```
 
 ## Local package
@@ -84,16 +91,16 @@ npm run verify:package
 ```
 
 This reuses the pinned development certificate. On first use it applies the
-selection rules above; otherwise it creates an ad-hoc artifact at `dist/Mirror
-Relay.app` and prints a warning. The ad-hoc result is suitable for package
+selection rules above; otherwise it creates an ad-hoc artifact at `dist/Phone
+Use.app` and prints a warning. The ad-hoc result is suitable for package
 verification only, not permission persistence testing. Use `npm run
 package:dev` for an installable development build.
 
 ## Public release
 
 ```sh
-export MIRROR_RELAY_SIGN_IDENTITY="Developer ID Application: …"
-export MIRROR_RELAY_NOTARY_PROFILE="mirror-relay-notary"
+export PHONE_USE_SIGN_IDENTITY="Developer ID Application: …"
+export PHONE_USE_NOTARY_PROFILE="phone-use-notary"
 npm run package:release
 ```
 
@@ -105,7 +112,7 @@ The release pipeline:
 4. notarizes and staples the app;
 5. creates a compressed DMG with an `/Applications` shortcut;
 6. signs, notarizes, staples, and Gatekeeper-checks the DMG;
-7. writes `Mirror Relay-<version>.dmg.sha256`.
+7. writes `Phone Use-<version>.dmg.sha256`.
 
 App notarization happens before DMG creation so the copy inside the disk image
 also carries a stapled ticket. Release packaging fails before modifying an
@@ -122,7 +129,7 @@ Before publishing a version:
 - run `npm run test:device` with the paired physical iPhone;
 - run `npm run test:focus` with a browser frontmost;
 - install the DMG on a clean Mac account and confirm Gatekeeper acceptance;
-- grant both permissions once, relaunch, and verify `mirror-relay doctor`;
+- grant both permissions once, relaunch, and verify `phone-use doctor`;
 - update from the previous signed version and confirm permissions persist;
 - reboot the Mac and confirm launch-at-login plus `open → observe → act → close`.
 

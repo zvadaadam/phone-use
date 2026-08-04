@@ -1,19 +1,19 @@
-# Mirror Relay
+# Phone Use
 
-Mirror Relay is a local macOS broker that lets authorized agents observe and
+Phone Use is a local macOS broker that lets authorized agents observe and
 control a real, powered-on iPhone through Apple’s iPhone Mirroring app.
 
 ```text
 agent CLI / authenticated dashboard
         ↕ HTTP on 127.0.0.1:8747
-Mirror Relay menu-bar app
+Phone Use menu-bar app
         ↕ ScreenCaptureKit + verified process-targeted input
 Apple iPhone Mirroring
         ↕ Apple Continuity
 nearby, powered-on, locked iPhone
 ```
 
-The browser does not embed Apple’s private UI and Mirror Relay does not patch or
+The browser does not embed Apple’s private UI and Phone Use does not patch or
 inject into Apple processes. It streams only the authorized iPhone Mirroring
 window through Apple’s public ScreenCaptureKit API, encodes frames in memory,
 maps normalized coordinates to that window, verifies the target before every
@@ -22,7 +22,7 @@ process.
 
 ## Product boundary
 
-Mirror Relay can:
+Phone Use can:
 
 - open and close Apple iPhone Mirroring on demand;
 - stream the visible iPhone screen to a local authenticated dashboard;
@@ -56,7 +56,7 @@ Requirements:
 Prefer Apple Development from **Xcode → Settings → Accounts → Manage
 Certificates**. If a Personal Team certificate is unavailable, create a
 local-only identity in **Keychain Access → Certificate Assistant → Create a
-Certificate** with the name `Mirror Relay Local Development`, identity type
+Certificate** with the name `Phone Use Local Development`, identity type
 **Self-Signed Root**, and certificate type **Code Signing**. Verify the selected
 channel and build the permission-stable app:
 
@@ -66,31 +66,38 @@ npm run signing:doctor
 npm run package:dev
 ```
 
-Copy `dist/Mirror Relay.app` to `/Applications`, open it, and grant the exact
+Copy `dist/Phone Use.app` to `/Applications`, open it, and grant the exact
 installed app:
 
 - **Privacy & Security → Screen & System Audio Recording**
 - **Privacy & Security → Accessibility**
 
-Relaunch Mirror Relay after changing either permission. The signing doctor pins
-the exact certificate SHA-1 in the ignored `.mirror-relay` state directory, and
+Relaunch Phone Use after changing either permission. The signing doctor pins
+the exact certificate SHA-1 in the ignored `.phone-use` state directory, and
 future development builds fail instead of silently switching certificates.
 Keep the bundle ID and that pinned certificate unchanged. Apple Development and
 the local self-signed identity both preserve one local designated requirement;
 Developer ID-signed releases do the same for customers. The self-signed channel
 is local development only and is not suitable for distribution.
 
+The first rebranded build migrates the local API token and signing pin from the
+previous Mirror Relay paths. It intentionally retains the frozen
+`com.adamzvada.mirrorrelay` bundle identifier, so an existing stable signature
+keeps the same macOS privacy identity. Existing installations signed by the
+legacy `Mirror Relay Local Development` certificate remain supported; fresh
+local-only setups use `Phone Use Local Development`.
+
 `npm run package:app` remains available for CI and isolated package checks when
 no certificate is installed, but its ad-hoc output must not replace a granted
 development install: every changed ad-hoc binary has a new CDHash and therefore
 a new macOS privacy identity.
 
-Public releases are distributed as a notarized `Mirror Relay-<version>.dmg`.
+Public releases are distributed as a notarized `Phone Use-<version>.dmg`.
 Drag the app to the Applications shortcut in the disk image. The app, its Swift
 CLI helper, and the disk image are signed; Bun, Node, Electron, and JavaScript
 runtimes are not shipped.
 
-The EU eligibility enabler is not part of Mirror Relay. If Apple’s app already
+The EU eligibility enabler is not part of Phone Use. If Apple’s app already
 connects, do not modify the macOS eligibility database.
 
 ## Agent CLI
@@ -98,25 +105,25 @@ connects, do not modify the macOS eligibility database.
 Use the wrapper so agents never read or handle the bearer token directly:
 
 ```sh
-./scripts/mirror-relayctl dashboard
-./scripts/mirror-relayctl doctor
-./scripts/mirror-relayctl status
-./scripts/mirror-relayctl open
-./scripts/mirror-relayctl observe /tmp/iphone.jpg
-./scripts/mirror-relayctl tap 0.50 0.72
-./scripts/mirror-relayctl swipe 0.50 0.80 0.50 0.25 350
-./scripts/mirror-relayctl type "hello"
-./scripts/mirror-relayctl home
-./scripts/mirror-relayctl apps
-./scripts/mirror-relayctl spotlight
-./scripts/mirror-relayctl close
-./scripts/mirror-relayctl version
+./scripts/phone-use dashboard
+./scripts/phone-use doctor
+./scripts/phone-use status
+./scripts/phone-use open
+./scripts/phone-use observe /tmp/iphone.jpg
+./scripts/phone-use tap 0.50 0.72
+./scripts/phone-use swipe 0.50 0.80 0.50 0.25 350
+./scripts/phone-use type "hello"
+./scripts/phone-use home
+./scripts/phone-use apps
+./scripts/phone-use spotlight
+./scripts/phone-use close
+./scripts/phone-use version
 ```
 
 The packaged Swift helper lives at:
 
 ```text
-/Applications/Mirror Relay.app/Contents/Helpers/mirror-relay
+/Applications/Phone Use.app/Contents/Helpers/phone-use
 ```
 
 It discovers its enclosing app before consulting Launch Services, launches the
@@ -130,7 +137,7 @@ include frame IDs and whether a fresh frame changed after the command.
 
 ### Mac focus behavior
 
-Mirror Relay never activates or raises iPhone Mirroring, switches Spaces, or
+Phone Use never activates or raises iPhone Mirroring, switches Spaces, or
 moves the Mac pointer. Pointer events begin as an AppKit `NSEvent`, receive the
 target Mirroring window's WindowServer metadata, and are posted directly to the
 Mirroring process. Keyboard and scroll events use the same process-targeted
@@ -141,11 +148,11 @@ addressable while Mirroring is covered or on another Space.
 
 ## Local API
 
-Mirror Relay listens only on `127.0.0.1:8747`. Its 256-bit agent bearer token is
+Phone Use listens only on `127.0.0.1:8747`. Its 256-bit agent bearer token is
 stored in a `0700` directory with `0600` file permissions:
 
 ```text
-~/Library/Application Support/Mirror Relay/token
+~/Library/Application Support/Phone Use/token
 ```
 
 Every route, including `/health` and static dashboard assets, requires the
@@ -166,7 +173,7 @@ bootstrap URL is itself an expiring credential.
 The CLI authenticates with the bearer token. The browser never receives that
 long-lived token: a single-use, 60-second bootstrap link is exchanged for an
 eight-hour, in-memory, HttpOnly, SameSite-strict session cookie. Bootstrap links
-cannot be replayed and dashboard sessions disappear when Mirror Relay quits.
+cannot be replayed and dashboard sessions disappear when Phone Use quits.
 
 ## Security and privacy model
 
@@ -200,7 +207,7 @@ memory. Apple’s fallback `screencapture` service requires a file destination;
 only when that fallback is active does a source PNG briefly exist inside a
 per-user `0700` scratch directory. It is set to `0600`, converted to JPEG in
 memory, and deleted immediately. Stale scratch files are scrubbed at startup.
-Mirror Relay does not retain frames, typed text, or interaction history. An
+Phone Use does not retain frames, typed text, or interaction history. An
 explicit CLI `observe` command writes the requested JPEG to the caller’s chosen
 path.
 
@@ -230,7 +237,7 @@ publication, stable geometry, and process-targeted event metadata.
 
 `npm run package:dev` pins and uses one exact certificate SHA-1. For a first
 build it preserves the installed app's available signer, otherwise accepts one
-unambiguous Apple Development identity or the exact `Mirror Relay Local
+unambiguous Apple Development identity or the exact `Phone Use Local
 Development` local fallback. It fails if the pinned signer disappears or a
 choice would be ambiguous. `npm run package:app` uses that same pin, otherwise
 it produces an ad-hoc artifact and prints a permission-persistence warning.
@@ -238,25 +245,30 @@ it produces an ad-hoc artifact and prints a permission-persistence warning.
 A distributable build must use Apple Developer credentials:
 
 ```sh
-export MIRROR_RELAY_SIGN_IDENTITY="Developer ID Application: …"
-export MIRROR_RELAY_NOTARY_PROFILE="mirror-relay-notary"
+export PHONE_USE_SIGN_IDENTITY="Developer ID Application: …"
+export PHONE_USE_NOTARY_PROFILE="phone-use-notary"
 npm run package:release
 ```
 
 The release command signs nested executables, submits the archive to Apple
 notary service, staples and validates the app and disk-image tickets, checks
-Gatekeeper acceptance, and creates `dist/Mirror Relay-<version>.dmg` plus a
+Gatekeeper acceptance, and creates `dist/Phone Use-<version>.dmg` plus a
 SHA-256 file. It fails closed when either credential is missing. See
 [PACKAGING.md](PACKAGING.md) for the identity policy and release checklist.
 
+The Node workspace uses the private package name `@zvadaadam/phone-use` because
+the unscoped `phone-use` name is already registered. The native app and CLI do
+not depend on publishing that Node package.
+
 ## Source layout
 
-- `native/Sources/MirrorCore` — capture, verified input, policies, and FIFO lock.
-- `native/Sources/MirrorRelayProtocol` — runtime-independent wire commands,
+- `native/Sources/PhoneUseCore` — capture, verified input, policies, and FIFO
+  lock.
+- `native/Sources/PhoneUseProtocol` — runtime-independent wire commands,
   bundle discovery, and compatibility version.
-- `native/Sources/MirrorRelayApp` — menu-bar lifecycle, broker state, auth, and
+- `native/Sources/PhoneUseApp` — menu-bar lifecycle, broker state, auth, and
   local HTTP server.
-- `native/Sources/MirrorRelayCLI` — token-hiding agent CLI.
+- `native/Sources/PhoneUseCLI` — token-hiding agent CLI.
 - `native/Tests` — native behavior and concurrency tests.
 - `public` — authenticated local dashboard.
 - `scripts` — packaging, release, integration, and installed-app smoke checks.
