@@ -1,7 +1,7 @@
 import Foundation
+import Network
 import PhoneUseCore
 import PhoneUseProtocol
-import Network
 
 final class LocalHTTPServer: @unchecked Sendable {
     static let port: UInt16 = {
@@ -177,6 +177,7 @@ final class LocalHTTPServer: @unchecked Sendable {
                 headers: [
                     "Content-Type": "image/jpeg",
                     "X-Frame-ID": String(frame.id),
+                    "X-Frame-Token": frame.token,
                     "Cache-Control": "no-store"
                 ],
                 body: frame.data

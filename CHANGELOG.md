@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Corrected the earlier conclusion that process-targeted AppKit event envelopes
+  control a physical iPhone Mirroring surface. Real-device testing proved that
+  reliable control requires global HID input while Mirroring is frontmost.
+- Made foreground focus an inviolable boundary. Removed the focus-lease CLI and
+  dashboard escape hatch; control now fails closed unless iPhone Mirroring is
+  already frontmost, and every action reports whether focus stayed unchanged.
+- Removed automatic background presses of Apple's Resume/Connect controls; a
+  paused session now waits for the user instead of risking a focus transition.
+- Replaced exact JPEG hashes with compact visual fingerprints so stale-frame
+  protection tolerates encoding noise and small animations but still rejects a
+  meaningful layout change.
+- Added honest delivery outcomes for partial gestures, incomplete input,
+  unverified visual changes, and failed focus preservation; the CLI and dashboard
+  no longer present those outcomes as success.
+- Stabilized pointer geometry before delivery, shortened tap and typing timing,
+  and kept live capture independent from control attempts.
+- Switched real-device typing to physical key events and corrected top-left
+  normalized coordinate mapping for global HID delivery.
+
 ## 0.9.0 — 2026-08-04
 
 - Reworked the README into a user-facing installation and usage guide with

@@ -44,6 +44,13 @@ public enum MirroringSessionEvidence {
         "resume",
         "try again"
     ]
+    private static let pausedStatusFragments = [
+        "connecting to iphone",
+        "connection paused",
+        "iphone in use",
+        "iphone not found",
+        "unable to connect"
+    ]
 
     public static func classify(
         root: Element,
@@ -57,23 +64,25 @@ public enum MirroringSessionEvidence {
             maximumDepth: maximumDepth,
             ancestorsAreUsable: true
         )
-        if evidence.hasPausedAction {
+        if evidence.hasPausedAction || evidence.hasPausedStatus {
             return .paused
         }
         if evidence.hasConnectedControl || !evidence.hasMeaningfulDescendant {
             return .candidateLive
         }
-        return .paused
+        return .indeterminate
     }
 
     private struct Evidence {
         var hasConnectedControl = false
         var hasPausedAction = false
+        var hasPausedStatus = false
         var hasMeaningfulDescendant = false
 
         mutating func merge(_ other: Evidence) {
             hasConnectedControl = hasConnectedControl || other.hasConnectedControl
             hasPausedAction = hasPausedAction || other.hasPausedAction
+            hasPausedStatus = hasPausedStatus || other.hasPausedStatus
             hasMeaningfulDescendant =
                 hasMeaningfulDescendant
                 || other.hasMeaningfulDescendant
@@ -94,7 +103,8 @@ public enum MirroringSessionEvidence {
             hasConnectedControl: isUsable
                 && element.identifier.map(connectedControlIdentifiers.contains) == true,
             hasPausedAction: isUsable && isReconnectAction(element),
-            hasMeaningfulDescendant: depth > 0 && isMeaningful(element)
+            hasPausedStatus: isUsable && isPausedStatus(element),
+            hasMeaningfulDescendant: depth > 0 && isUsable && isMeaningful(element)
         )
         for child in element.children {
             evidence.merge(
@@ -118,6 +128,15 @@ public enum MirroringSessionEvidence {
             .contains(where: reconnectButtonLabels.contains)
     }
 
+    private static func isPausedStatus(_ element: Element) -> Bool {
+        guard element.role == "AXStaticText" else { return false }
+        return [element.title, element.description]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .contains { value in
+                pausedStatusFragments.contains { value.contains($0) }
+            }
+    }
+
     private static func isMeaningful(_ element: Element) -> Bool {
         if element.role == "AXButton" || element.role == "AXStaticText" {
             return true
@@ -132,6 +151,7 @@ public enum MirroringSessionEvidence {
 public struct MirroringSessionReadiness: Sendable {
     public let requiredConsecutiveSamples: Int
     private var consecutiveSamples = 0
+    private var hasConfirmedLiveSession = false
 
     public init(requiredConsecutiveSamples: Int = 5) {
         precondition(requiredConsecutiveSamples > 0)
@@ -142,15 +162,24 @@ public struct MirroringSessionReadiness: Sendable {
         _ classification: MirroringSessionEvidence.Classification,
         captureIsReady: Bool
     ) -> Bool {
-        guard classification == .candidateLive, captureIsReady else {
+        switch classification {
+        case .candidateLive where captureIsReady:
+            consecutiveSamples += 1
+            if consecutiveSamples >= requiredConsecutiveSamples {
+                hasConfirmedLiveSession = true
+            }
+            return hasConfirmedLiveSession
+        case .indeterminate where captureIsReady:
+            consecutiveSamples = 0
+            return hasConfirmedLiveSession
+        default:
             reset()
             return false
         }
-        consecutiveSamples += 1
-        return consecutiveSamples >= requiredConsecutiveSamples
     }
 
     public mutating func reset() {
         consecutiveSamples = 0
+        hasConfirmedLiveSession = false
     }
 }

@@ -39,7 +39,8 @@ body {
 }
 
 button,
-textarea {
+textarea,
+input {
   font: inherit;
 }
 
@@ -315,8 +316,7 @@ body[data-live="true"] .phone-topline i {
   -webkit-user-select: none;
 }
 
-.stream,
-.screen-input {
+.stream {
   width: 100%;
   height: 100%;
   position: absolute;
@@ -333,16 +333,6 @@ body[data-live="true"] .phone-topline i {
 
 body[data-live="true"] .stream {
   opacity: 1;
-}
-
-.screen-input {
-  z-index: 2;
-  cursor: crosshair;
-  touch-action: none;
-}
-
-body:not([data-live="true"]) .screen-input {
-  pointer-events: none;
 }
 
 .empty-state {
@@ -413,6 +403,17 @@ body[data-live="true"] .empty-state {
 .button:hover {
   border-color: #48515d;
   background: #1d2229;
+}
+
+button:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+button:disabled:hover {
+  border-color: var(--line);
+  background: var(--panel-raised);
 }
 
 .button.primary {

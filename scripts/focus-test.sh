@@ -8,10 +8,8 @@ SAMPLE_FILE="${TEMP_DIR}/frontmost.tsv"
 STOP_FILE="${TEMP_DIR}/stop"
 SAMPLER_PID=""
 if (( $# == 0 )); then
-  PREPARE_ARGS=(home)
-  COMMAND_ARGS=(apps)
+  COMMAND_ARGS=(home)
 else
-  PREPARE_ARGS=()
   COMMAND_ARGS=("$@")
 fi
 COMMAND_LABEL="${(j: :)COMMAND_ARGS}"
@@ -35,42 +33,6 @@ frontmost_info() {
   '
 }
 
-process_id_from() {
-  print -r -- "$1" | cut -f1
-}
-
-bundle_id_from() {
-  print -r -- "$1" | cut -f2
-}
-
-wait_for_stable_phone() {
-  local output_file="${TEMP_DIR}/settle.jpg"
-  local previous_frame_id=""
-  local previous_hash=""
-  local stable_frames=0
-  local observation frame_id frame_hash
-  for _ in {1..50}; do
-    observation=$("${CLI}" observe "${output_file}")
-    frame_id=$(print -r -- "${observation}" | awk '/^Saved frame / { print $3 }')
-    frame_hash=$(shasum -a 256 "${output_file}" | awk '{ print $1 }')
-    if [[ -n "${frame_id}" && "${frame_id}" != "${previous_frame_id}" ]]; then
-      if [[ "${frame_hash}" == "${previous_hash}" ]]; then
-        stable_frames=$((stable_frames + 1))
-      else
-        stable_frames=0
-      fi
-      previous_frame_id="${frame_id}"
-      previous_hash="${frame_hash}"
-      if (( stable_frames >= 3 )); then
-        return 0
-      fi
-    fi
-    sleep 0.1
-  done
-  print -u2 "FAIL: the phone did not settle on three consecutive unchanged fresh frames"
-  return 1
-}
-
 sample_frontmost_processes() {
   /usr/bin/swift -e '
     import AppKit
@@ -90,14 +52,28 @@ sample_frontmost_processes() {
   ' "${STOP_FILE}" >>"${SAMPLE_FILE}"
 }
 
+observe_with_retry() {
+  local output_file="$1"
+  local observation
+  for _ in {1..30}; do
+    if observation=$("${CLI}" observe "${output_file}" 2>/dev/null); then
+      print -r -- "${observation}"
+      return 0
+    fi
+    sleep 0.1
+  done
+  print -u2 "FAIL: no fresh iPhone frame became available"
+  return 1
+}
+
 if [[ ! -x "${CLI}" ]]; then
   print -u2 "FAIL: install Phone Use in /Applications first"
   exit 1
 fi
 
 BEFORE_INFO=$(frontmost_info)
-BEFORE_PID=$(process_id_from "${BEFORE_INFO}")
-BEFORE_BUNDLE=$(bundle_id_from "${BEFORE_INFO}")
+BEFORE_PID=$(print -r -- "${BEFORE_INFO}" | cut -f1)
+BEFORE_BUNDLE=$(print -r -- "${BEFORE_INFO}" | cut -f2)
 if [[ -z "${BEFORE_PID}" ]]; then
   print -u2 "FAIL: could not identify the frontmost Mac app"
   exit 1
@@ -107,47 +83,55 @@ if [[ "${BEFORE_BUNDLE}" == "${MIRRORING_BUNDLE_ID}" ]]; then
   exit 1
 fi
 
+BEFORE_OBSERVE=$(observe_with_retry "${TEMP_DIR}/before.jpg")
+BEFORE_TOKEN=$(print -r -- "${BEFORE_OBSERVE}" \
+  | sed -n 's/.* token \([0-9a-f]*\) to .*/\1/p')
+[[ ${#BEFORE_TOKEN} == 64 ]] || {
+  print -u2 "FAIL: observe did not return a valid frame token"
+  exit 1
+}
+
 sample_frontmost_processes &
 SAMPLER_PID=$!
 for _ in {1..100}; do
   [[ -s "${SAMPLE_FILE}" ]] && break
   sleep 0.01
 done
-if (( ${#PREPARE_ARGS[@]} > 0 )); then
-  set +e
-  PREPARE_RESULT=$("${CLI}" "${PREPARE_ARGS[@]}")
-  PREPARE_STATUS=$?
-  set -e
-  if (( PREPARE_STATUS != 0 )); then
-    print -u2 "FAIL: could not prepare a known phone state"
-    exit "${PREPARE_STATUS}"
-  fi
-  RESULT_JSON="${PREPARE_RESULT}" node -e '
-    const result = JSON.parse(process.env.RESULT_JSON);
-    if (result.success !== true) {
-      throw new Error("Preparation command did not succeed");
-    }
-  '
-  wait_for_stable_phone
-fi
+
 set +e
-RESULT=$("${CLI}" "${COMMAND_ARGS[@]}")
+RESULT=$("${CLI}" "${COMMAND_ARGS[@]}" 2>&1)
 COMMAND_STATUS=$?
 set -e
 touch "${STOP_FILE}"
 wait "${SAMPLER_PID}"
 SAMPLER_PID=""
-if (( COMMAND_STATUS != 0 )); then
-  print -u2 "FAIL: ${COMMAND_LABEL} exited with status ${COMMAND_STATUS}"
-  exit "${COMMAND_STATUS}"
+
+if (( COMMAND_STATUS == 0 )); then
+  print -u2 "FAIL: ${COMMAND_LABEL} was accepted while another Mac app was frontmost"
+  exit 1
 fi
-RESULT_JSON="${RESULT}" node -e '
-  const result = JSON.parse(process.env.RESULT_JSON);
-  if (result.success !== true) {
-    throw new Error("Control command did not succeed");
+if [[ "${RESULT}" != *"Phone Use never changes Mac focus"* ]]; then
+  print -u2 "FAIL: background refusal did not explain the focus invariant"
+  print -u2 -- "${RESULT}"
+  exit 1
+fi
+
+AFTER_OBSERVE=$(observe_with_retry "${TEMP_DIR}/after.jpg")
+AFTER_TOKEN=$(print -r -- "${AFTER_OBSERVE}" \
+  | sed -n 's/.* token \([0-9a-f]*\) to .*/\1/p')
+BEFORE_TOKEN="${BEFORE_TOKEN}" AFTER_TOKEN="${AFTER_TOKEN}" node -e '
+  const before = process.env.BEFORE_TOKEN;
+  const after = process.env.AFTER_TOKEN;
+  if (before.length !== 64 || after.length !== 64) {
+    throw new Error("observe did not return two valid frame tokens");
   }
-  if (result.screenChanged !== true) {
-    throw new Error("Control command did not produce a fresh changed phone frame");
+  const distance = [...before].reduce(
+    (sum, digit, index) =>
+      sum + Math.abs(parseInt(digit, 16) - parseInt(after[index], 16)),
+    0,
+  );
+  if (distance > 12) {
+    throw new Error(`phone changed after a refused command (distance ${distance})`);
   }
 '
 
@@ -159,15 +143,15 @@ fi
 FOREIGN_SAMPLE=$(awk -F '\t' -v expected="${BEFORE_PID}" \
   '$2 != expected { print; exit }' "${SAMPLE_FILE}")
 if [[ -n "${FOREIGN_SAMPLE}" ]]; then
-  print -u2 "FAIL: foreground changed during control: ${FOREIGN_SAMPLE}"
+  print -u2 "FAIL: foreground changed during refused control: ${FOREIGN_SAMPLE}"
   exit 1
 fi
 
 AFTER_INFO=$(frontmost_info)
-AFTER_PID=$(process_id_from "${AFTER_INFO}")
+AFTER_PID=$(print -r -- "${AFTER_INFO}" | cut -f1)
 if [[ "${AFTER_PID}" != "${BEFORE_PID}" ]]; then
   print -u2 "FAIL: focus moved from PID ${BEFORE_PID} (${BEFORE_BUNDLE}) to PID ${AFTER_PID}"
   exit 1
 fi
 
-print "PASS: ${COMMAND_LABEL} visibly changed the iPhone while all ${SAMPLE_COUNT} foreground samples stayed on PID ${BEFORE_PID} (${BEFORE_BUNDLE})"
+print "PASS: ${COMMAND_LABEL} failed closed and all ${SAMPLE_COUNT} foreground samples stayed on PID ${BEFORE_PID} (${BEFORE_BUNDLE})"
