@@ -39,4 +39,41 @@ final class TokenStoreMigrationTests: XCTestCase {
         let attributes = try FileManager.default.attributesOfItem(atPath: store.fileURL.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
+
+    func testDoesNotResurrectLegacyTokenAfterRotation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        let legacyDirectory = root.appendingPathComponent("Mirror Relay", isDirectory: true)
+        let destinationDirectory = root.appendingPathComponent("Phone Use", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(
+            at: legacyDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let legacyToken = String(repeating: "b", count: 64)
+        let legacyTokenURL = legacyDirectory.appendingPathComponent("token")
+        try legacyToken.write(to: legacyTokenURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: legacyTokenURL.path
+        )
+
+        let migrated = try TokenStore(
+            baseURL: destinationDirectory,
+            legacyBaseURL: legacyDirectory
+        )
+        XCTAssertEqual(migrated.token, legacyToken)
+        try FileManager.default.removeItem(at: migrated.fileURL)
+
+        let rotated = try TokenStore(
+            baseURL: destinationDirectory,
+            legacyBaseURL: legacyDirectory
+        )
+        XCTAssertNotEqual(rotated.token, legacyToken)
+        XCTAssertEqual(rotated.token.count, 64)
+    }
 }

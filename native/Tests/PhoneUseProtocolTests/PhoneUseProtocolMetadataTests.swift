@@ -55,4 +55,26 @@ final class PhoneUseProtocolMetadataTests: XCTestCase {
 
         XCTAssertNil(PhoneUseProtocolMetadata.enclosingApplication(for: executable))
     }
+
+    func testRetiresLegacyTokenCandidateAfterMigration() {
+        let root = URL(fileURLWithPath: "/tmp/Application Support", isDirectory: true)
+
+        XCTAssertEqual(
+            PhoneUseProtocolMetadata.tokenFileCandidates(
+                in: root,
+                legacyMigrationCompleted: false
+            ).map(\.path),
+            [
+                "/tmp/Application Support/Phone Use/token",
+                "/tmp/Application Support/Mirror Relay/token"
+            ]
+        )
+        XCTAssertEqual(
+            PhoneUseProtocolMetadata.tokenFileCandidates(
+                in: root,
+                legacyMigrationCompleted: true
+            ).map(\.path),
+            ["/tmp/Application Support/Phone Use/token"]
+        )
+    }
 }

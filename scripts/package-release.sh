@@ -59,7 +59,6 @@ PHONE_USE_EXPECTED_ARCHS=arm64 \
 
 rm -f "${SUBMISSION_ZIP}" "${WORK_DMG}" "${WORK_SHA256_FILE}"
 rm -rf "${WORK_CASK_ROOT}"
-rm -f "${LEGACY_DMG}" "${LEGACY_SHA256_FILE}"
 ditto -c -k --keepParent "${APP_DIR}" "${SUBMISSION_ZIP}"
 xcrun notarytool submit "${SUBMISSION_ZIP}" \
   --keychain-profile "${NOTARY_PROFILE}" \
@@ -91,6 +90,7 @@ PHONE_USE_CASK_URL= \
   "${SCRIPT_DIR}/render-cask.sh" "${WORK_CASK_ASSET}" "${WORK_CASK}"
 rm -f "${WORK_CASK_ASSET}"
 mkdir -p "${FINAL_CASK:h}"
+rm -f "${LEGACY_DMG}" "${LEGACY_SHA256_FILE}"
 mv -f "${WORK_DMG}" "${DMG}"
 mv -f "${WORK_SHA256_FILE}" "${SHA256_FILE}"
 mv -f "${WORK_CASK}" "${FINAL_CASK}"

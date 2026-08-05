@@ -8,8 +8,10 @@ SAMPLE_FILE="${TEMP_DIR}/frontmost.tsv"
 STOP_FILE="${TEMP_DIR}/stop"
 SAMPLER_PID=""
 if (( $# == 0 )); then
-  COMMAND_ARGS=(home)
+  PREPARE_ARGS=(home)
+  COMMAND_ARGS=(apps)
 else
+  PREPARE_ARGS=()
   COMMAND_ARGS=("$@")
 fi
 COMMAND_LABEL="${(j: :)COMMAND_ARGS}"
@@ -39,6 +41,34 @@ process_id_from() {
 
 bundle_id_from() {
   print -r -- "$1" | cut -f2
+}
+
+wait_for_stable_phone() {
+  local output_file="${TEMP_DIR}/settle.jpg"
+  local previous_frame_id=""
+  local previous_hash=""
+  local stable_frames=0
+  local observation frame_id frame_hash
+  for _ in {1..50}; do
+    observation=$("${CLI}" observe "${output_file}")
+    frame_id=$(print -r -- "${observation}" | awk '/^Saved frame / { print $3 }')
+    frame_hash=$(shasum -a 256 "${output_file}" | awk '{ print $1 }')
+    if [[ -n "${frame_id}" && "${frame_id}" != "${previous_frame_id}" ]]; then
+      if [[ "${frame_hash}" == "${previous_hash}" ]]; then
+        stable_frames=$((stable_frames + 1))
+      else
+        stable_frames=0
+      fi
+      previous_frame_id="${frame_id}"
+      previous_hash="${frame_hash}"
+      if (( stable_frames >= 3 )); then
+        return 0
+      fi
+    fi
+    sleep 0.1
+  done
+  print -u2 "FAIL: the phone did not settle on three consecutive unchanged fresh frames"
+  return 1
 }
 
 sample_frontmost_processes() {
@@ -83,6 +113,23 @@ for _ in {1..100}; do
   [[ -s "${SAMPLE_FILE}" ]] && break
   sleep 0.01
 done
+if (( ${#PREPARE_ARGS[@]} > 0 )); then
+  set +e
+  PREPARE_RESULT=$("${CLI}" "${PREPARE_ARGS[@]}")
+  PREPARE_STATUS=$?
+  set -e
+  if (( PREPARE_STATUS != 0 )); then
+    print -u2 "FAIL: could not prepare a known phone state"
+    exit "${PREPARE_STATUS}"
+  fi
+  RESULT_JSON="${PREPARE_RESULT}" node -e '
+    const result = JSON.parse(process.env.RESULT_JSON);
+    if (result.success !== true) {
+      throw new Error("Preparation command did not succeed");
+    }
+  '
+  wait_for_stable_phone
+fi
 set +e
 RESULT=$("${CLI}" "${COMMAND_ARGS[@]}")
 COMMAND_STATUS=$?
@@ -98,6 +145,9 @@ RESULT_JSON="${RESULT}" node -e '
   const result = JSON.parse(process.env.RESULT_JSON);
   if (result.success !== true) {
     throw new Error("Control command did not succeed");
+  }
+  if (result.screenChanged !== true) {
+    throw new Error("Control command did not produce a fresh changed phone frame");
   }
 '
 
@@ -120,4 +170,4 @@ if [[ "${AFTER_PID}" != "${BEFORE_PID}" ]]; then
   exit 1
 fi
 
-print "PASS: ${COMMAND_LABEL} reached the iPhone while all ${SAMPLE_COUNT} foreground samples stayed on PID ${BEFORE_PID} (${BEFORE_BUNDLE})"
+print "PASS: ${COMMAND_LABEL} visibly changed the iPhone while all ${SAMPLE_COUNT} foreground samples stayed on PID ${BEFORE_PID} (${BEFORE_BUNDLE})"

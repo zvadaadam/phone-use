@@ -45,9 +45,22 @@ final class TokenStore: @unchecked Sendable {
         )
 
         fileURL = directory.appendingPathComponent("token", isDirectory: false)
-        if !fileManager.fileExists(atPath: fileURL.path) {
-            let legacyDirectory =
-                legacyBaseURL
+        let migrationMarkerURL = directory.appendingPathComponent(
+            PhoneUseProtocolMetadata.legacyTokenMigrationMarkerName,
+            isDirectory: false
+        )
+        if fileManager.fileExists(atPath: migrationMarkerURL.path) {
+            try Self.validateOwnedItem(
+                at: migrationMarkerURL,
+                expectedType: .typeRegular,
+                fileManager: fileManager
+            )
+            try fileManager.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: migrationMarkerURL.path
+            )
+        } else if !fileManager.fileExists(atPath: fileURL.path) {
+            let legacyDirectory = legacyBaseURL
                 ?? (baseURL == nil
                     ? applicationSupportURL.appendingPathComponent(
                         PhoneUseProtocolMetadata.legacyApplicationSupportDirectoryName,
@@ -79,6 +92,10 @@ final class TokenStore: @unchecked Sendable {
             Self.isValidToken(existing)
         {
             token = existing
+            try Self.recordLegacyMigrationCompletion(
+                at: migrationMarkerURL,
+                fileManager: fileManager
+            )
             return
         }
 
@@ -87,6 +104,10 @@ final class TokenStore: @unchecked Sendable {
         try fileManager.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: fileURL.path
+        )
+        try Self.recordLegacyMigrationCompletion(
+            at: migrationMarkerURL,
+            fileManager: fileManager
         )
     }
 
@@ -164,6 +185,24 @@ final class TokenStore: @unchecked Sendable {
         try fileManager.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: destinationURL.path
+        )
+    }
+
+    private static func recordLegacyMigrationCompletion(
+        at markerURL: URL,
+        fileManager: FileManager
+    ) throws {
+        if !fileManager.fileExists(atPath: markerURL.path) {
+            try Data().write(to: markerURL, options: .atomic)
+        }
+        try validateOwnedItem(
+            at: markerURL,
+            expectedType: .typeRegular,
+            fileManager: fileManager
+        )
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: markerURL.path
         )
     }
 

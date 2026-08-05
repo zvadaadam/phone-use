@@ -6,15 +6,20 @@ import PhoneUseProtocol
 
 final class AppleMirroringTransport: @unchecked Sendable {
     private let state: BrokerState
-    private let target = WindowTarget()
-    private let session = SessionController()
+    private let target: WindowTarget
+    private let session: SessionController
     private let capture: MirrorCapture
     private let input: InputController
+    private let intentLock = NSLock()
+    private var sessionIntent = SessionIntent.passive
     private var captureTask: Task<Void, Never>?
     private var sessionMonitorTask: Task<Void, Never>?
 
     init(state: BrokerState) {
+        let target = WindowTarget()
         self.state = state
+        self.target = target
+        session = SessionController(target: target)
         capture = MirrorCapture(output: state, target: target)
         input = InputController(logger: state, target: target)
     }
@@ -37,12 +42,14 @@ final class AppleMirroringTransport: @unchecked Sendable {
         captureTask = nil
         sessionMonitorTask?.cancel()
         sessionMonitorTask = nil
-        _ = session.close()
+        setSessionIntent(.closing)
+        _ = session.requestClose()
         state.updateSession(.waitingForApplication)
         state.clearFrame()
     }
 
     func ensureSession(timeout: Duration) async throws {
+        setSessionIntent(.requested)
         if state.snapshot().phase == .streaming, target.current() != nil {
             return
         }
@@ -91,12 +98,19 @@ final class AppleMirroringTransport: @unchecked Sendable {
     }
 
     func closeSession() async -> Bool {
-        let closed = session.close()
+        setSessionIntent(.closing)
+        let monitorTask = sessionMonitorTask
+        sessionMonitorTask = nil
+        monitorTask?.cancel()
+        await monitorTask?.value
+
         captureTask?.cancel()
         await captureTask?.value
         captureTask = nil
+        let closed = await session.close()
         state.updateSession(.waitingForApplication)
         state.clearFrame()
+        setSessionIntent(.passive)
         start()
         return closed
     }
@@ -132,10 +146,14 @@ final class AppleMirroringTransport: @unchecked Sendable {
             case .paused:
                 readiness.reset()
                 state.updateSession(.waitingForPhone)
-                if pausedSamples.isMultiple(of: 20) {
-                    _ = session.performReconnectAction(from: inspection)
+                if currentSessionIntent() == .requested {
+                    if pausedSamples.isMultiple(of: 20) {
+                        _ = session.performReconnectAction(from: inspection)
+                    }
+                    pausedSamples += 1
+                } else {
+                    pausedSamples = 0
                 }
-                pausedSamples += 1
             case .indeterminate:
                 pausedSamples = 0
                 readiness.reset()
@@ -148,4 +166,22 @@ final class AppleMirroringTransport: @unchecked Sendable {
             try? await Task.sleep(for: .milliseconds(250))
         }
     }
+
+    private func setSessionIntent(_ intent: SessionIntent) {
+        intentLock.lock()
+        sessionIntent = intent
+        intentLock.unlock()
+    }
+
+    private func currentSessionIntent() -> SessionIntent {
+        intentLock.lock()
+        defer { intentLock.unlock() }
+        return sessionIntent
+    }
+}
+
+private enum SessionIntent {
+    case passive
+    case requested
+    case closing
 }

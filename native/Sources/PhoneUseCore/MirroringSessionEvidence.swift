@@ -42,8 +42,7 @@ public enum MirroringSessionEvidence {
     private static let reconnectButtonLabels: Set<String> = [
         "connect",
         "resume",
-        "try again",
-        "ok"
+        "try again"
     ]
 
     public static func classify(

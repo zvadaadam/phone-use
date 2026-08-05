@@ -122,3 +122,27 @@ test("the rebrand migrates the legacy signing pin", async (t) => {
     secondHash,
   );
 });
+
+test("legacy signing migration runs only once", async (t) => {
+  const stateDirectory = await mkdtemp(path.join(os.tmpdir(), "phone-use-signing-"));
+  t.after(() => rm(stateDirectory, { recursive: true, force: true }));
+  const legacyPinFile = path.join(stateDirectory, "legacy-signing-identity-sha1");
+  const pinFile = path.join(stateDirectory, "signing-identity-sha1");
+  await writeFile(legacyPinFile, `${secondHash}\n`);
+
+  const migrated = selectIdentity({ stateDirectory, identities, legacyPinFile });
+  assert.equal(migrated.status, 0, migrated.stderr);
+  assert.equal(migrated.stdout.trim(), secondHash);
+
+  await rm(pinFile);
+  const rotated = selectIdentity({
+    stateDirectory,
+    requested: firstHash,
+    identities,
+    legacyPinFile,
+  });
+
+  assert.equal(rotated.status, 0, rotated.stderr);
+  assert.equal(rotated.stdout.trim(), firstHash);
+  assert.equal((await readFile(pinFile, "utf8")).trim(), firstHash);
+});

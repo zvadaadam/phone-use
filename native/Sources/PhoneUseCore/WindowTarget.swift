@@ -36,7 +36,10 @@ public final class WindowTarget: @unchecked Sendable {
                 [.optionIncludingWindow, .excludeDesktopElements],
                 snapshot.windowID
             ) as? [[String: Any]],
-            let rawBounds = windows.first?[kCGWindowBounds as String] as? NSDictionary
+            let window = windows.first,
+            (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+                == snapshot.processID,
+            let rawBounds = window[kCGWindowBounds as String] as? NSDictionary
         else {
             return nil
         }

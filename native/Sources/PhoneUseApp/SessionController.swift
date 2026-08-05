@@ -6,6 +6,12 @@ import PhoneUseCore
 final class SessionController: @unchecked Sendable {
     static let mirroringBundleIdentifier = "com.apple.ScreenContinuity"
 
+    private let target: WindowTarget
+
+    init(target: WindowTarget) {
+        self.target = target
+    }
+
     enum State: Equatable, Sendable {
         case candidateLive
         case paused
@@ -20,7 +26,7 @@ final class SessionController: @unchecked Sendable {
     }
 
     func open() async throws {
-        guard runningApplication() == nil else { return }
+        guard runningApplications().isEmpty else { return }
         guard
             let applicationURL = NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: Self.mirroringBundleIdentifier
@@ -46,34 +52,56 @@ final class SessionController: @unchecked Sendable {
     }
 
     @discardableResult
-    func close() -> Bool {
-        guard let application = runningApplication() else { return true }
-        return application.terminate()
+    func requestClose() -> Bool {
+        let applications = runningApplications()
+        guard !applications.isEmpty else { return true }
+        return applications.map { $0.terminate() }.allSatisfy { $0 }
+    }
+
+    func close(timeout: Duration = .seconds(5)) async -> Bool {
+        guard requestClose() else { return false }
+
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if SessionTerminationPolicy.isComplete(
+                runningProcessIDs: runningApplications().map(\.processIdentifier)
+            ) {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return SessionTerminationPolicy.isComplete(
+            runningProcessIDs: runningApplications().map(\.processIdentifier)
+        )
     }
 
     func inspect() -> Inspection {
         guard AXIsProcessTrusted() else {
             return Inspection(state: .indeterminate, reconnectAction: nil)
         }
-        guard let application = runningApplication() else {
+        let applications = runningApplications()
+        guard !applications.isEmpty else {
             return Inspection(state: .notRunning, reconnectAction: nil)
         }
-        let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
-        guard
-            let window = element(
-                of: applicationElement,
-                attribute: kAXFocusedWindowAttribute
-            ) ?? element(
-                of: applicationElement,
-                attribute: kAXMainWindowAttribute
-            )
-                ?? values(
-                    of: applicationElement,
-                    attribute: kAXWindowsAttribute
-                )?.first
+        guard let targetSnapshot = target.current(),
+            let application = applications.first(where: {
+                $0.processIdentifier == targetSnapshot.processID
+            }),
+            let targetBounds = target.bounds(for: targetSnapshot)
         else {
             return Inspection(state: .noWindow, reconnectAction: nil)
         }
+        let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
+        let windows = candidateWindows(of: applicationElement)
+        let candidateBounds = windows.map { bounds(of: $0) }
+        guard let index = AccessibilityWindowSelector.matchingIndex(
+            targetBounds: targetBounds,
+            candidateBounds: candidateBounds
+        ) else {
+            return Inspection(state: .noWindow, reconnectAction: nil)
+        }
+        let window = windows[index]
 
         // A failed root read is not evidence of a connected session. Empty
         // children, however, is the normal opaque live Mirroring surface.
@@ -114,10 +142,79 @@ final class SessionController: @unchecked Sendable {
         return AXUIElementPerformAction(action, kAXPressAction as CFString) == .success
     }
 
-    private func runningApplication() -> NSRunningApplication? {
+    private func runningApplications() -> [NSRunningApplication] {
         NSRunningApplication.runningApplications(
             withBundleIdentifier: Self.mirroringBundleIdentifier
-        ).first
+        )
+    }
+
+    private func candidateWindows(of application: AXUIElement) -> [AXUIElement] {
+        var candidates: [AXUIElement] = []
+        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            if let window = element(of: application, attribute: attribute),
+                !candidates.contains(where: { CFEqual($0, window) })
+            {
+                candidates.append(window)
+            }
+        }
+        for window in values(of: application, attribute: kAXWindowsAttribute) ?? []
+        where !candidates.contains(where: { CFEqual($0, window) }) {
+            candidates.append(window)
+        }
+        return candidates
+    }
+
+    private func bounds(of element: AXUIElement) -> CGRect? {
+        guard let position = point(of: element, attribute: kAXPositionAttribute),
+            let size = size(of: element, attribute: kAXSizeAttribute)
+        else {
+            return nil
+        }
+        return CGRect(origin: position, size: size)
+    }
+
+    private func point(of element: AXUIElement, attribute: String) -> CGPoint? {
+        guard let value = accessibilityValue(of: element, attribute: attribute) else {
+            return nil
+        }
+        var point = CGPoint.zero
+        guard AXValueGetType(value) == .cgPoint,
+            AXValueGetValue(value, .cgPoint, &point)
+        else {
+            return nil
+        }
+        return point
+    }
+
+    private func size(of element: AXUIElement, attribute: String) -> CGSize? {
+        guard let value = accessibilityValue(of: element, attribute: attribute) else {
+            return nil
+        }
+        var size = CGSize.zero
+        guard AXValueGetType(value) == .cgSize,
+            AXValueGetValue(value, .cgSize, &size)
+        else {
+            return nil
+        }
+        return size
+    }
+
+    private func accessibilityValue(
+        of element: AXUIElement,
+        attribute: String
+    ) -> AXValue? {
+        var rawValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            attribute as CFString,
+            &rawValue
+        ) == .success,
+        let rawValue,
+        CFGetTypeID(rawValue) == AXValueGetTypeID()
+        else {
+            return nil
+        }
+        return unsafeDowncast(rawValue, to: AXValue.self)
     }
 
     private struct EvidenceSnapshot {
@@ -280,6 +377,35 @@ final class SessionController: @unchecked Sendable {
             return nil
         }
         return rawValue as? [AXUIElement]
+    }
+}
+
+enum AccessibilityWindowSelector {
+    static func matchingIndex(
+        targetBounds: CGRect,
+        candidateBounds: [CGRect?],
+        maximumDistance: CGFloat = 2
+    ) -> Int? {
+        candidateBounds.enumerated()
+            .compactMap { index, bounds -> (index: Int, distance: CGFloat)? in
+                guard let bounds else { return nil }
+                return (index, distance(targetBounds, bounds))
+            }
+            .min(by: { $0.distance < $1.distance })
+            .flatMap { $0.distance <= maximumDistance ? $0.index : nil }
+    }
+
+    private static func distance(_ left: CGRect, _ right: CGRect) -> CGFloat {
+        abs(left.minX - right.minX)
+            + abs(left.minY - right.minY)
+            + abs(left.width - right.width)
+            + abs(left.height - right.height)
+    }
+}
+
+enum SessionTerminationPolicy {
+    static func isComplete(runningProcessIDs: [pid_t]) -> Bool {
+        runningProcessIDs.isEmpty
     }
 }
 

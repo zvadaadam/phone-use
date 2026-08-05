@@ -68,7 +68,9 @@ containing its private key; it is not trusted for distribution.
 On the first build after the rename, the packager atomically copies a valid pin
 from `.mirror-relay/signing-identity-sha1` when the new pin does not exist. The
 runtime likewise copies the existing token from `Application Support/Mirror
-Relay` into `Application Support/Phone Use` without rotating it.
+Relay` into `Application Support/Phone Use` without rotating it. Both migrations
+record one-time completion, so deliberately deleting the new pin or token never
+resurrects the retired legacy value.
 
 List available identities:
 

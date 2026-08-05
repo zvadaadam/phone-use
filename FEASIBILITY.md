@@ -39,7 +39,7 @@ The remaining limitations are:
   with undocumented WindowServer fields;
 - the Apple Continuity transport itself has no public third-party SDK.
 
-Phone Use 0.8 uses the public stream for its primary capture path and keeps
+Phone Use 0.9 uses the public stream for its primary capture path and keeps
 the exact-window screenshot path as a fail-safe. The earlier WebDriverAgent
 transport remains removed because it requires an unlocked development device
 and a separately signed device server.
@@ -52,7 +52,7 @@ Proven with the same capture and input code used by the broker:
   welcome window;
 - produced six nonblank JPEG frames at 708×1562 showing Apple's live
   **iPhone Not Found** UI;
-- injected a normalized HID tap onto **Try Again**;
+- posted a normalized process-targeted tap onto **Try Again**;
 - captured ten frames with five distinct visual states, with the first change
   occurring immediately after the tap.
 - opened a real locked-device session through the exact installed

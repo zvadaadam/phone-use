@@ -6,6 +6,7 @@ public enum PhoneUseProtocolMetadata {
     public static let productIdentifier = "phone-use"
     public static let applicationSupportDirectoryName = "Phone Use"
     public static let legacyApplicationSupportDirectoryName = "Mirror Relay"
+    public static let legacyTokenMigrationMarkerName = "legacy-token-migration-complete"
     public static let currentVersion = 1
 
     // Frozen so the rebrand preserves the designated requirement behind existing
@@ -45,5 +46,24 @@ public enum PhoneUseProtocolMetadata {
             return nil
         }
         return version
+    }
+
+    public static func tokenFileCandidates(
+        in applicationSupportURL: URL,
+        legacyMigrationCompleted: Bool
+    ) -> [URL] {
+        let current = applicationSupportURL
+            .appendingPathComponent(applicationSupportDirectoryName, isDirectory: true)
+            .appendingPathComponent("token", isDirectory: false)
+        guard !legacyMigrationCompleted else { return [current] }
+        return [
+            current,
+            applicationSupportURL
+                .appendingPathComponent(
+                    legacyApplicationSupportDirectoryName,
+                    isDirectory: true
+                )
+                .appendingPathComponent("token", isDirectory: false)
+        ]
     }
 }

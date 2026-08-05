@@ -339,14 +339,21 @@ struct PhoneUseCLI {
             appropriateFor: nil,
             create: false
         )
-        return [
-            PhoneUseProtocolMetadata.applicationSupportDirectoryName,
-            PhoneUseProtocolMetadata.legacyApplicationSupportDirectoryName
-        ].map {
-            applicationSupportURL
-                .appendingPathComponent($0, isDirectory: true)
-                .appendingPathComponent("token", isDirectory: false)
-        }
+        let migrationMarkerURL = applicationSupportURL
+            .appendingPathComponent(
+                PhoneUseProtocolMetadata.applicationSupportDirectoryName,
+                isDirectory: true
+            )
+            .appendingPathComponent(
+                PhoneUseProtocolMetadata.legacyTokenMigrationMarkerName,
+                isDirectory: false
+            )
+        return PhoneUseProtocolMetadata.tokenFileCandidates(
+            in: applicationSupportURL,
+            legacyMigrationCompleted: FileManager.default.fileExists(
+                atPath: migrationMarkerURL.path
+            )
+        )
     }
 
     private static func loadTokenStartingBrokerIfNeeded() async throws -> String {

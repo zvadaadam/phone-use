@@ -56,6 +56,14 @@ final class MirroringSessionEvidenceTests: XCTestCase {
         XCTAssertEqual(MirroringSessionEvidence.classify(root: tree), .paused)
     }
 
+    func testGenericOKButtonIsNotAReconnectAction() {
+        XCTAssertFalse(
+            MirroringSessionEvidence.isReconnectAction(
+                Element(role: "AXButton", title: "OK")
+            )
+        )
+    }
+
     func testHiddenOrDisabledControlsAreIgnored() {
         let tree = Element(children: [
             Element(identifier: "app.grid.3x3", isHidden: true),

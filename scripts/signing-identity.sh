@@ -5,6 +5,7 @@ PHONE_USE_LEGACY_LOCAL_SIGN_IDENTITY="${PHONE_USE_LEGACY_LOCAL_SIGN_IDENTITY:-Mi
 PHONE_USE_SIGNING_STATE_DIR="${PHONE_USE_SIGNING_STATE_DIR:-${PROJECT_DIR}/.phone-use}"
 PHONE_USE_SIGNING_PIN_FILE="${PHONE_USE_SIGNING_PIN_FILE:-${PHONE_USE_SIGNING_STATE_DIR}/signing-identity-sha1}"
 PHONE_USE_LEGACY_SIGNING_PIN_FILE="${PHONE_USE_LEGACY_SIGNING_PIN_FILE:-${PROJECT_DIR}/.mirror-relay/signing-identity-sha1}"
+PHONE_USE_LEGACY_SIGNING_MIGRATION_MARKER="${PHONE_USE_LEGACY_SIGNING_MIGRATION_MARKER:-${PHONE_USE_SIGNING_STATE_DIR}/legacy-signing-pin-migration-complete}"
 
 phone_use_list_signing_identities() {
   security find-identity -p codesigning 2>/dev/null \
@@ -122,15 +123,26 @@ phone_use_pinned_development_identity() {
 }
 
 phone_use_migrate_legacy_signing_pin() {
-  [[ ! -f "${PHONE_USE_SIGNING_PIN_FILE}" ]] || return 0
-  [[ -f "${PHONE_USE_LEGACY_SIGNING_PIN_FILE}" ]] || return 0
-  local legacy_hash
-  legacy_hash=$(tr -d '[:space:]' <"${PHONE_USE_LEGACY_SIGNING_PIN_FILE}")
-  if [[ ! "${legacy_hash}" =~ '^[[:xdigit:]]{40}$' ]]; then
-    print -u2 "Invalid legacy signing pin at ${PHONE_USE_LEGACY_SIGNING_PIN_FILE}."
-    return 1
+  [[ ! -f "${PHONE_USE_LEGACY_SIGNING_MIGRATION_MARKER}" ]] || return 0
+  if [[ ! -f "${PHONE_USE_SIGNING_PIN_FILE}" \
+      && -f "${PHONE_USE_LEGACY_SIGNING_PIN_FILE}" ]]; then
+    local legacy_hash
+    legacy_hash=$(tr -d '[:space:]' <"${PHONE_USE_LEGACY_SIGNING_PIN_FILE}")
+    if [[ ! "${legacy_hash}" =~ '^[[:xdigit:]]{40}$' ]]; then
+      print -u2 "Invalid legacy signing pin at ${PHONE_USE_LEGACY_SIGNING_PIN_FILE}."
+      return 1
+    fi
+    phone_use_write_signing_pin "${legacy_hash}"
   fi
-  phone_use_write_signing_pin "${legacy_hash}"
+  phone_use_write_signing_migration_marker
+}
+
+phone_use_write_signing_migration_marker() {
+  mkdir -p "${PHONE_USE_SIGNING_STATE_DIR}"
+  local temporary_marker
+  temporary_marker=$(mktemp "${PHONE_USE_SIGNING_STATE_DIR}/legacy-signing-pin-migration-complete.XXXXXX")
+  chmod 600 "${temporary_marker}"
+  mv -f "${temporary_marker}" "${PHONE_USE_LEGACY_SIGNING_MIGRATION_MARKER}"
 }
 
 phone_use_write_signing_pin() {

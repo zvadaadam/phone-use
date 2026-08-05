@@ -37,24 +37,7 @@ requirements.
 
 ## Install
 
-### Homebrew — recommended release channel
-
-```sh
-brew tap zvadaadam/tap
-brew install --cask phone-use
-open -a "Phone Use"
-```
-
-The Cask installs both `Phone Use.app` and the `phone-use` command.
-
-### Signed disk image
-
-Download `Phone-Use-<version>.dmg` from the
-[latest release](https://github.com/zvadaadam/homebrew-tap/releases/latest),
-open it, and drag **Phone Use** to **Applications**. The release DMG, app, and
-embedded CLI are Developer ID-signed and notarized.
-
-### Build from source
+### Current private preview: build from source
 
 Source builds require Xcode command-line tools and Node.js 20 or newer:
 
@@ -70,6 +53,26 @@ Drag `Phone Use.app` from `dist` into **Applications**, then open it.
 `package:dev` requires a stable Apple Development or local code-signing
 identity so macOS permission grants survive rebuilds. See
 [PACKAGING.md](PACKAGING.md) for developer signing setup.
+
+### Homebrew — recommended release channel after launch
+
+The signed Homebrew channel is prepared but not published yet. Once the first
+release is available, install it with:
+
+```sh
+brew tap zvadaadam/tap
+brew install --cask phone-use
+open -a "Phone Use"
+```
+
+The Cask installs both `Phone Use.app` and the `phone-use` command.
+
+### Signed disk image — after launch
+
+Once published, download `Phone-Use-<version>.dmg` from the
+[latest release](https://github.com/zvadaadam/homebrew-tap/releases/latest),
+open it, and drag **Phone Use** to **Applications**. The release DMG, app, and
+embedded CLI are Developer ID-signed and notarized.
 
 Commands below use `phone-use`, which Homebrew adds to your `PATH`. With a DMG
 install, use `/Applications/Phone Use.app/Contents/Helpers/phone-use`. From a

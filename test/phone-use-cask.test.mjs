@@ -150,11 +150,17 @@ test("Cask generation rejects a single backslash in the URL", async (t) => {
 test("release packaging renders the Cask before publishing artifacts", async () => {
   const script = await readFile(packageRelease, "utf8");
   const renderIndex = script.indexOf('"${SCRIPT_DIR}/render-cask.sh"');
+  const legacyCleanupIndex = script.indexOf(
+    'rm -f "${LEGACY_DMG}" "${LEGACY_SHA256_FILE}"',
+  );
   const publishIndex = script.indexOf('mv -f "${WORK_DMG}" "${DMG}"');
 
   assert.notEqual(renderIndex, -1);
+  assert.notEqual(legacyCleanupIndex, -1);
   assert.notEqual(publishIndex, -1);
   assert.ok(renderIndex < publishIndex);
+  assert.ok(renderIndex < legacyCleanupIndex);
+  assert.ok(legacyCleanupIndex < publishIndex);
   assert.match(
     script,
     /PHONE_USE_CASK_LOCAL=0 \\\nPHONE_USE_CASK_URL= \\\n\s+"\$\{SCRIPT_DIR\}\/render-cask\.sh"/,
