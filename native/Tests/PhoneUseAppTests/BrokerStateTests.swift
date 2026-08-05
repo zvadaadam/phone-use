@@ -39,7 +39,7 @@ final class BrokerStateTests: XCTestCase {
         XCTAssertEqual(state.snapshot().phase, .waiting)
         XCTAssertEqual(state.snapshot().fps, 0)
         XCTAssertNil(state.latestFrame())
-        XCTAssertEqual(state.frameMarker().contentHash, 0)
+        XCTAssertEqual(state.frameMarker().token, "")
     }
 
     func testCaptureFailureCannotReopenPreviousFrame() {

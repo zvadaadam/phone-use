@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import PhoneUseCore
 import PhoneUseProtocol
@@ -22,7 +23,7 @@ struct BrokerSnapshot: Codable, Sendable {
 
 struct FrameMarker: Sendable {
     let id: UInt64
-    let contentHash: Int
+    let token: String
 }
 
 final class BrokerState: CaptureOutput, @unchecked Sendable {
@@ -42,7 +43,7 @@ final class BrokerState: CaptureOutput, @unchecked Sendable {
     private var currentFrame: Data?
     private var currentFrameCapturedAt: Date?
     private var currentFrameID: UInt64 = 0
-    private var currentFrameHash = 0
+    private var currentFrameToken = ""
     private var framesThisSecond = 0
     private var currentFPS = 0
     private var recentLogs: [String] = []
@@ -78,7 +79,11 @@ final class BrokerState: CaptureOutput, @unchecked Sendable {
         currentFrame = data
         currentFrameCapturedAt = lastCaptureFrameAt
         currentFrameID &+= 1
-        currentFrameHash = data.hashValue
+        currentFrameToken =
+            VisualFrameFingerprint.token(for: data)
+            ?? SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
         frameID = currentFrameID
         framesThisSecond += 1
         snapshot = snapshotLocked()
@@ -208,7 +213,7 @@ final class BrokerState: CaptureOutput, @unchecked Sendable {
 
     func latestFrame(
         maxAge: TimeInterval = CapturePolicy.frameFreshnessInterval
-    ) -> (data: Data, id: UInt64)? {
+    ) -> (data: Data, id: UInt64, token: String)? {
         lock.lock()
         defer { lock.unlock() }
         guard effectiveStatusLocked().phase == .streaming,
@@ -218,13 +223,13 @@ final class BrokerState: CaptureOutput, @unchecked Sendable {
         else {
             return nil
         }
-        return (currentFrame, currentFrameID)
+        return (currentFrame, currentFrameID, currentFrameToken)
     }
 
     func frameMarker() -> FrameMarker {
         lock.lock()
         defer { lock.unlock() }
-        return FrameMarker(id: currentFrameID, contentHash: currentFrameHash)
+        return FrameMarker(id: currentFrameID, token: currentFrameToken)
     }
 
     @discardableResult
@@ -287,7 +292,7 @@ final class BrokerState: CaptureOutput, @unchecked Sendable {
     private func clearPublishedFrameLocked() {
         currentFrame = nil
         currentFrameCapturedAt = nil
-        currentFrameHash = 0
+        currentFrameToken = ""
         framesThisSecond = 0
         currentFPS = 0
     }

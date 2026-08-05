@@ -22,7 +22,6 @@ final class SessionController: @unchecked Sendable {
 
     struct Inspection {
         let state: State
-        let reconnectAction: AXUIElement?
     }
 
     func open() async throws {
@@ -78,11 +77,11 @@ final class SessionController: @unchecked Sendable {
 
     func inspect() -> Inspection {
         guard AXIsProcessTrusted() else {
-            return Inspection(state: .indeterminate, reconnectAction: nil)
+            return Inspection(state: .indeterminate)
         }
         let applications = runningApplications()
         guard !applications.isEmpty else {
-            return Inspection(state: .notRunning, reconnectAction: nil)
+            return Inspection(state: .notRunning)
         }
         guard let targetSnapshot = target.current(),
             let application = applications.first(where: {
@@ -90,23 +89,25 @@ final class SessionController: @unchecked Sendable {
             }),
             let targetBounds = target.bounds(for: targetSnapshot)
         else {
-            return Inspection(state: .noWindow, reconnectAction: nil)
+            return Inspection(state: .noWindow)
         }
         let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
         let windows = candidateWindows(of: applicationElement)
         let candidateBounds = windows.map { bounds(of: $0) }
-        guard let index = AccessibilityWindowSelector.matchingIndex(
-            targetBounds: targetBounds,
-            candidateBounds: candidateBounds
-        ) else {
-            return Inspection(state: .noWindow, reconnectAction: nil)
+        guard
+            let index = AccessibilityWindowSelector.matchingIndex(
+                targetBounds: targetBounds,
+                candidateBounds: candidateBounds
+            )
+        else {
+            return Inspection(state: .noWindow)
         }
         let window = windows[index]
 
         // A failed root read is not evidence of a connected session. Empty
         // children, however, is the normal opaque live Mirroring surface.
         guard case .value(let rootChildren) = readChildren(of: window) else {
-            return Inspection(state: .indeterminate, reconnectAction: nil)
+            return Inspection(state: .indeterminate)
         }
         let snapshot = snapshot(
             of: window,
@@ -122,24 +123,12 @@ final class SessionController: @unchecked Sendable {
         )
         switch classification {
         case .candidateLive:
-            return Inspection(
-                state: .candidateLive,
-                reconnectAction: snapshot.reconnectAction
-            )
+            return Inspection(state: .candidateLive)
         case .paused:
-            return Inspection(
-                state: .paused,
-                reconnectAction: snapshot.reconnectAction
-            )
+            return Inspection(state: .paused)
         case .indeterminate:
-            return Inspection(state: .indeterminate, reconnectAction: nil)
+            return Inspection(state: .indeterminate)
         }
-    }
-
-    @discardableResult
-    func performReconnectAction(from inspection: Inspection) -> Bool {
-        guard let action = inspection.reconnectAction else { return false }
-        return AXUIElementPerformAction(action, kAXPressAction as CFString) == .success
     }
 
     private func runningApplications() -> [NSRunningApplication] {
@@ -204,13 +193,14 @@ final class SessionController: @unchecked Sendable {
         attribute: String
     ) -> AXValue? {
         var rawValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            attribute as CFString,
-            &rawValue
-        ) == .success,
-        let rawValue,
-        CFGetTypeID(rawValue) == AXValueGetTypeID()
+        guard
+            AXUIElementCopyAttributeValue(
+                element,
+                attribute as CFString,
+                &rawValue
+            ) == .success,
+            let rawValue,
+            CFGetTypeID(rawValue) == AXValueGetTypeID()
         else {
             return nil
         }
@@ -219,7 +209,6 @@ final class SessionController: @unchecked Sendable {
 
     private struct EvidenceSnapshot {
         let evidence: MirroringSessionEvidence.Element
-        let reconnectAction: AXUIElement?
         let hadReadFailure: Bool
     }
 
@@ -283,14 +272,8 @@ final class SessionController: @unchecked Sendable {
             isHidden: isHidden,
             children: descendants.map(\.evidence)
         )
-        let reconnectAction =
-            isUsable
-                && MirroringSessionEvidence.isReconnectAction(evidence)
-            ? element : nil
         return EvidenceSnapshot(
             evidence: evidence,
-            reconnectAction: reconnectAction
-                ?? descendants.lazy.compactMap(\.reconnectAction).first,
             hadReadFailure: childrenReadFailed
                 || descendants.contains(where: \.hadReadFailure)
         )

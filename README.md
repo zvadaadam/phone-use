@@ -7,7 +7,8 @@ Use a real iPhone from an AI agent running on your Mac.
 </p>
 
 Phone Use gives local agents a simple way to see the current iPhone screen,
-tap, swipe, type, and use system controls through Apple’s iPhone Mirroring.
+and a guarded CLI for tap, swipe, typing, and system controls through Apple’s
+iPhone Mirroring.
 The phone stays paired through Apple’s normal Continuity flow; Phone Use does
 not jailbreak the device, bypass its passcode, or send the screen to a cloud
 service.
@@ -16,8 +17,8 @@ Phone Use is useful for:
 
 - checking Messages, Mail, calendars, notifications, or another mobile-only
   app without taking your hands away from the Mac;
-- letting an agent complete a multi-step task while you continue working in a
-  different Mac window;
+- letting an agent observe a mobile-only flow without changing the foreground
+  Mac application;
 - testing a website or app on a physical iPhone rather than a simulator;
 - navigating an app and stopping before a sensitive action such as sending,
   deleting, purchasing, or publishing;
@@ -105,10 +106,10 @@ Open the local dashboard:
 phone-use dashboard
 ```
 
-The dashboard shows the live phone surface. Click or drag on the phone image,
-send text to the focused field, or use **Home**, **Apps**, and **Search**. Phone
-Use deliberately sends input to iPhone Mirroring without raising it over the
-Mac app you are currently using.
+The dashboard shows the live phone surface without changing Mac focus. Its
+controls are disabled in the current preview: Apple iPhone Mirroring ignores
+the proven public synthetic-input route unless it is frontmost, and Phone Use
+never activates, raises, or focuses it.
 
 For agents and scripts, the CLI exposes the same flow:
 
@@ -127,7 +128,16 @@ phone-use close
 
 Tap and swipe coordinates are normalized from `0` to `1`, starting at the
 top-left of the visible iPhone screen. Agents should take a fresh screenshot,
-decide on one action, perform it, and observe again.
+decide on one action, perform it, and observe again. `observe` also prints a
+64-character visual frame token. Pass it back with `--frame-token <token>` to
+reject an action if the phone has meaningfully changed in the meantime. The
+token tolerates harmless JPEG noise, a caret blink, and small thumbnail fades.
+
+Control commands succeed only when iPhone Mirroring is already frontmost. They
+fail closed in the normal background-agent case. This is intentional: global
+HID delivery is the only public route proven to control the physical phone,
+while per-process events do not register. Phone Use does not hide that platform
+limit behind a temporary focus switch.
 
 ## Example prompts for an agent
 
@@ -180,14 +190,14 @@ send, purchase, delete, publish, account, permission, or security action.
 | `phone-use dashboard` | Open the authenticated local dashboard |
 | `phone-use doctor` | Check installation, permissions, and Mirroring |
 | `phone-use status` | Return the current session and frame status |
-| `phone-use open` | Open or reconnect the iPhone Mirroring session |
+| `phone-use open` | Start iPhone Mirroring without activating it, then wait for a live session |
 | `phone-use observe <file.jpg>` | Save one fresh phone screenshot |
-| `phone-use tap <x> <y>` | Tap a normalized screen coordinate |
-| `phone-use swipe <x> <y> <x2> <y2> [ms]` | Perform one swipe |
-| `phone-use type <text>` | Type into the currently focused phone field |
-| `phone-use home` | Go to the iPhone Home Screen |
-| `phone-use apps` | Open the iPhone App Switcher |
-| `phone-use spotlight` | Open iPhone Search |
+| `phone-use tap [flags] <x> <y>` | Tap a normalized screen coordinate |
+| `phone-use swipe [flags] <x> <y> <x2> <y2> [ms]` | Perform one swipe |
+| `phone-use type [flags] <text>` | Type supported physical-key text into the focused phone field |
+| `phone-use home [flags]` | Go to the iPhone Home Screen |
+| `phone-use apps [flags]` | Open the iPhone App Switcher |
+| `phone-use spotlight [flags]` | Open iPhone Search |
 | `phone-use close` | Close Mirroring and clear the current frame |
 | `phone-use version` | Print the installed version |
 
@@ -200,10 +210,21 @@ The packaged helper is also available at:
 Agents should use the CLI or dashboard instead of reading the local bearer
 token directly.
 
+Control flags:
+
+- `--frame-token <token>` binds the action to the most recently observed visual
+  state and fails closed after a meaningful layout change.
+
 ## What to expect
 
 - Phone Use is visual and pixel-based. It does not expose a semantic iOS
   accessibility tree, so agents must observe again after acting.
+- Capture is background-safe. Reliable public control is foreground-only;
+  Phone Use never brings Apple Mirroring forward and rejects the command when
+  it is not already frontmost.
+- The action response distinguishes event posting, complete delivery, visible
+  phone change, and whether Mac focus stayed unchanged. A failed result must
+  be observed before retrying because a partial gesture cannot be rolled back.
 - The physical iPhone cannot be used directly while an active Mirroring
   session controls it. Unlocking or using the phone may pause the session.
 - The first Apple connection or a recovery flow can require you to unlock the
@@ -251,6 +272,8 @@ not a temporary or ad-hoc development build.
 
 - Lock the physical iPhone and wait for Mirroring to reconnect.
 - Run `phone-use doctor` and `phone-use status`.
+- If iPhone Mirroring is not already frontmost, the current control backend is
+  deliberately unavailable. Phone Use will not change Mac focus to make it work.
 - Make sure another copy of Phone Use is not running from `dist` or Downloads.
 - Close and reopen the session before retrying the action.
 

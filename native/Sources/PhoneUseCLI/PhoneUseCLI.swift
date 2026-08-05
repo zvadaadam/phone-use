@@ -73,25 +73,40 @@ struct PhoneUseCLI {
             let response = try await request(method: "GET", path: "/api/observe", token: token)
             try response.data.write(to: URL(fileURLWithPath: arguments[1]), options: .atomic)
             let frameID = response.http.value(forHTTPHeaderField: "X-Frame-ID") ?? "unknown"
-            print("Saved frame \(frameID) to \(arguments[1])")
+            let frameToken =
+                response.http.value(forHTTPHeaderField: "X-Frame-Token")
+                ?? "unknown"
+            print("Saved frame \(frameID) token \(frameToken) to \(arguments[1])")
         case "tap":
-            guard arguments.count == 3,
-                let x = Double(arguments[1]),
-                let y = Double(arguments[2])
-            else {
-                throw CLIError("Usage: \(commandName) tap <x 0...1> <y 0...1>")
-            }
-            try await act(ControlCommand(type: "tap", x: x, y: y), token: token)
-        case "swipe":
-            guard (5...6).contains(arguments.count),
-                let x = Double(arguments[1]),
-                let y = Double(arguments[2]),
-                let x2 = Double(arguments[3]),
-                let y2 = Double(arguments[4]),
-                arguments.count == 5 || Int(arguments[5]) != nil
+            let action = try parseActionArguments(Array(arguments.dropFirst()))
+            guard action.operands.count == 2,
+                let x = Double(action.operands[0]),
+                let y = Double(action.operands[1])
             else {
                 throw CLIError(
-                    "Usage: \(commandName) swipe <x> <y> <x2> <y2> [duration-ms]"
+                    "Usage: \(commandName) tap [--frame-token <token>] <x 0...1> <y 0...1>"
+                )
+            }
+            try await act(
+                ControlCommand(
+                    type: "tap",
+                    x: x,
+                    y: y,
+                    expectedFrameToken: action.expectedFrameToken
+                ),
+                token: token
+            )
+        case "swipe":
+            let action = try parseActionArguments(Array(arguments.dropFirst()))
+            guard (4...5).contains(action.operands.count),
+                let x = Double(action.operands[0]),
+                let y = Double(action.operands[1]),
+                let x2 = Double(action.operands[2]),
+                let y2 = Double(action.operands[3]),
+                action.operands.count == 4 || Int(action.operands[4]) != nil
+            else {
+                throw CLIError(
+                    "Usage: \(commandName) swipe [--frame-token <token>] <x> <y> <x2> <y2> [duration-ms]"
                 )
             }
             try await act(
@@ -101,19 +116,44 @@ struct PhoneUseCLI {
                     y: y,
                     x2: x2,
                     y2: y2,
-                    durationMs: arguments.count == 6 ? Int(arguments[5]) : nil
+                    durationMs: action.operands.count == 5
+                        ? Int(action.operands[4]) : nil,
+                    expectedFrameToken: action.expectedFrameToken
                 ),
                 token: token
             )
         case "type":
-            let text = arguments.dropFirst().joined(separator: " ")
+            let action = try parseActionArguments(Array(arguments.dropFirst()))
+            let text = action.operands.joined(separator: " ")
             guard !text.isEmpty else {
-                throw CLIError("Usage: \(commandName) type <text>")
+                throw CLIError(
+                    "Usage: \(commandName) type [--frame-token <token>] <text>"
+                )
             }
-            try await act(ControlCommand(type: "type", text: text), token: token)
+            try await act(
+                ControlCommand(
+                    type: "type",
+                    text: text,
+                    expectedFrameToken: action.expectedFrameToken
+                ),
+                token: token
+            )
         case "home", "apps", "spotlight":
+            let action = try parseActionArguments(Array(arguments.dropFirst()))
+            guard action.operands.isEmpty else {
+                throw CLIError(
+                    "Usage: \(commandName) \(command) [--frame-token <token>]"
+                )
+            }
             let shortcut = command == "apps" ? "appSwitcher" : command
-            try await act(ControlCommand(type: "shortcut", name: shortcut), token: token)
+            try await act(
+                ControlCommand(
+                    type: "shortcut",
+                    name: shortcut,
+                    expectedFrameToken: action.expectedFrameToken
+                ),
+                token: token
+            )
         default:
             throw CLIError("Unknown command: \(command)\n\n\(usage)")
         }
@@ -121,7 +161,47 @@ struct PhoneUseCLI {
 
     private static func act(_ command: ControlCommand, token: String) async throws {
         let body = try JSONEncoder().encode(command)
-        try await printResponse(method: "POST", path: "/api/act", token: token, body: body)
+        let response = try await request(
+            method: "POST",
+            path: "/api/act",
+            token: token,
+            body: body
+        )
+        printPayload(response.data)
+        let outcome = try JSONDecoder().decode(ActionOutcome.self, from: response.data)
+        guard outcome.success else {
+            throw CLIError(outcome.message)
+        }
+    }
+
+    private static func parseActionArguments(
+        _ arguments: [String]
+    ) throws -> ActionArguments {
+        var expectedFrameToken: String?
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--frame-token":
+                guard index + 1 < arguments.count else {
+                    throw CLIError("--frame-token requires the token printed by observe")
+                }
+                expectedFrameToken = arguments[index + 1]
+                index += 2
+            case "--allow-focus-lease":
+                throw CLIError(
+                    "--allow-focus-lease is not supported: Phone Use never changes Mac focus"
+                )
+            default:
+                return ActionArguments(
+                    expectedFrameToken: expectedFrameToken,
+                    operands: Array(arguments.dropFirst(index))
+                )
+            }
+        }
+        return ActionArguments(
+            expectedFrameToken: expectedFrameToken,
+            operands: []
+        )
     }
 
     private static func printDoctor(status: CLIStatus) throws {
@@ -163,7 +243,11 @@ struct PhoneUseCLI {
         body: Data? = nil
     ) async throws {
         let response = try await request(method: method, path: path, token: token, body: body)
-        if let object = try? JSONSerialization.jsonObject(with: response.data),
+        printPayload(response.data)
+    }
+
+    private static func printPayload(_ data: Data) {
+        if let object = try? JSONSerialization.jsonObject(with: data),
             let pretty = try? JSONSerialization.data(
                 withJSONObject: object,
                 options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -171,7 +255,7 @@ struct PhoneUseCLI {
         {
             print(String(decoding: pretty, as: UTF8.self))
         } else {
-            print(String(decoding: response.data, as: UTF8.self))
+            print(String(decoding: data, as: UTF8.self))
         }
     }
 
@@ -339,7 +423,8 @@ struct PhoneUseCLI {
             appropriateFor: nil,
             create: false
         )
-        let migrationMarkerURL = applicationSupportURL
+        let migrationMarkerURL =
+            applicationSupportURL
             .appendingPathComponent(
                 PhoneUseProtocolMetadata.applicationSupportDirectoryName,
                 isDirectory: true
@@ -382,10 +467,10 @@ struct PhoneUseCLI {
           status
           open | close
           observe <output.jpg>
-          tap <x 0...1> <y 0...1>
-          swipe <x> <y> <x2> <y2> [duration-ms]
-          type <text>
-          home | apps | spotlight
+          tap [--frame-token <token>] <x 0...1> <y 0...1>
+          swipe [--frame-token <token>] <x> <y> <x2> <y2> [duration-ms]
+          type [--frame-token <token>] <text>
+          home | apps | spotlight [--frame-token <token>]
           version
         """
 }
@@ -393,6 +478,16 @@ struct PhoneUseCLI {
 private struct HTTPResult {
     let data: Data
     let http: HTTPURLResponse
+}
+
+private struct ActionArguments {
+    let expectedFrameToken: String?
+    let operands: [String]
+}
+
+private struct ActionOutcome: Decodable {
+    let success: Bool
+    let message: String
 }
 
 private struct APIError: Decodable {

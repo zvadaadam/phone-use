@@ -55,7 +55,6 @@
                   alt="Live real iPhone screen"
                   draggable="false"
                 />
-                <div class="screen-input" id="screen-input" aria-label="iPhone touch surface"></div>
                 <div class="empty-state" id="empty-state">
                   <span class="scan-glyph" aria-hidden="true"></span>
                   <strong id="empty-title">Waiting for iPhone Mirroring</strong>
@@ -105,30 +104,30 @@
               <span class="mono">⌘ 1—3</span>
             </div>
             <div class="control-grid">
-              <button class="control-button" type="button" data-shortcut="home">
+              <button class="control-button" type="button" data-shortcut="home" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11.4 12 5l8 6.4V20H4Z"/></svg>
                 <span>Home</span>
               </button>
-              <button class="control-button" type="button" data-shortcut="appSwitcher">
+              <button class="control-button" type="button" data-shortcut="appSwitcher" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="11" height="16" rx="2"/><path d="M18 7h2v10h-2"/></svg>
                 <span>Apps</span>
               </button>
-              <button class="control-button" type="button" data-shortcut="spotlight">
+              <button class="control-button" type="button" data-shortcut="spotlight" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></svg>
                 <span>Search</span>
               </button>
             </div>
-            <p class="focus-note">Controls stay in this window—Mirroring never takes focus.</p>
+            <p class="focus-note">Phone Use never changes Mac focus. With the current Apple Mirroring backend, controls fail closed unless iPhone Mirroring is already frontmost.</p>
           </section>
 
           <section class="panel text-panel">
             <div class="panel-heading">
               <p class="eyebrow">Keyboard</p>
-              <span class="mono">UTF-8</span>
+              <span class="mono">PHYSICAL KEYS</span>
             </div>
             <label for="text-input">Send text to the focused field</label>
-            <textarea id="text-input" rows="3" placeholder="Type something…"></textarea>
-            <button class="button send-button" id="send-text" type="button">
+            <textarea id="text-input" rows="3" placeholder="Background input unavailable" disabled></textarea>
+            <button class="button send-button" id="send-text" type="button" disabled>
               Send text
               <span aria-hidden="true">↗</span>
             </button>

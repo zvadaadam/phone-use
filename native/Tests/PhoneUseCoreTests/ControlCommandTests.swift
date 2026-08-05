@@ -1,5 +1,5 @@
-import XCTest
 import PhoneUseProtocol
+import XCTest
 
 @testable import PhoneUseCore
 
@@ -38,6 +38,25 @@ final class ControlCommandTests: XCTestCase {
     func testRejectsLegacyPointerPhases() {
         XCTAssertThrowsError(
             try ControlCommand(type: "pointer", x: 0.5, y: 0.5).validated()
+        )
+    }
+
+    func testValidatesExpectedFrameToken() {
+        XCTAssertNoThrow(
+            try ControlCommand(
+                type: "tap",
+                x: 0.5,
+                y: 0.5,
+                expectedFrameToken: String(repeating: "a", count: 64)
+            ).validated()
+        )
+        XCTAssertThrowsError(
+            try ControlCommand(
+                type: "tap",
+                x: 0.5,
+                y: 0.5,
+                expectedFrameToken: "stale"
+            ).validated()
         )
     }
 }

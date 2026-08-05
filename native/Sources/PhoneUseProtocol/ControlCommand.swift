@@ -9,6 +9,7 @@ public struct ControlCommand: Codable, Sendable {
     public let durationMs: Int?
     public let text: String?
     public let name: String?
+    public let expectedFrameToken: String?
 
     public init(
         type: String,
@@ -18,7 +19,8 @@ public struct ControlCommand: Codable, Sendable {
         y2: Double? = nil,
         durationMs: Int? = nil,
         text: String? = nil,
-        name: String? = nil
+        name: String? = nil,
+        expectedFrameToken: String? = nil
     ) {
         self.type = type
         self.x = x
@@ -28,6 +30,7 @@ public struct ControlCommand: Codable, Sendable {
         self.durationMs = durationMs
         self.text = text
         self.name = name
+        self.expectedFrameToken = expectedFrameToken
     }
 
     public func validated() throws -> ControlCommand {
@@ -53,6 +56,12 @@ public struct ControlCommand: Codable, Sendable {
             }
         default:
             throw ControlError("Unknown control command")
+        }
+        if let expectedFrameToken,
+            expectedFrameToken.count != 64
+                || !expectedFrameToken.allSatisfy(\.isHexDigit)
+        {
+            throw ControlError("Expected frame token must be a 64-character hexadecimal value")
         }
         return self
     }

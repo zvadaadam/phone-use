@@ -21,6 +21,12 @@ Best capture-performance evidence.
   WebRTC for browser transport.
 - Uses global HID events for control after directly-created targeted CGEvents
   proved insufficient in that implementation.
+- Explicitly documents that HID taps require Mirroring frontmost and that its
+  daemon reasserts focus when another app takes it. That behavior violates
+  Phone Use's never-change-focus invariant.
+- Offers WebDriverAgent as a cursor-free alternative, but that is a separate
+  on-device XCTest transport requiring Developer Mode, signing, and an unlocked
+  setup flow; it is not the locked Continuity route this project targets.
 - Includes a single-controller lease and a broader LAN/WebRTC product surface.
 
 Phone Use adopts the public ScreenCaptureKit window stream, but not WebRTC
@@ -56,14 +62,18 @@ Local verification:
   library was absent, so the release binary was more reliable than a clean
   source build on this machine.
 
-Phone Use adopts its window-classification and phased-scroll lessons, not
-its process-per-frame capture path, foreground HID delivery, or full 33-tool
-MCP surface. Local testing found a narrower background route: start pointer
-events as AppKit `NSEvent` envelopes, add the destination window's WindowServer
-metadata, then use `postToPid`. Directly-created CGEvents with only the public
-fields still failed, which explains the earlier projects' result. The local
-HTTP API is easier for the browser dashboard and for agents that are not MCP
-clients.
+Phone Use adopts its window-classification, global HID, physical-key, and
+phased-scroll lessons, not its process-per-frame capture path or full 33-tool
+MCP surface. Real-device testing disproved Phone Use's earlier background-input
+experiment: AppKit `NSEvent` envelopes with WindowServer metadata and
+`postToPid` can report successful posting but do not control the phone. The
+working route is global HID with Mirroring frontmost. Phone Use therefore
+rejects background control instead of activating the Apple app.
+The upstream FAQ reaches the same conclusion: macOS does not expose an API for
+directing these events to the background Mirroring surface; its suggested
+mitigations still acquire focus and therefore do not meet this project's bar.
+The local HTTP API remains easier for the browser dashboard and for agents that
+are not MCP clients.
 
 ## `Pauli1Go/iphone-mirroring-eu-enabler`
 
@@ -129,7 +139,8 @@ The best agent experience is:
 2. one-time Screen Recording and Accessibility grants for a stably signed Mac
    broker;
 3. background launch at login;
-4. authenticated local `open → observe/act → close` calls;
+4. authenticated local `open → observe → close` calls in the background, with
+   control available only when Mirroring is already frontmost;
 5. pixel/OCR/vision planning above the broker;
 6. a separate test-lab product, not a hidden fallback, when semantic iOS UI
    data is required.
@@ -141,8 +152,8 @@ operate a powered-off phone.
 
 | Route | Real locked phone | Smoothness | Setup | Launchable |
 | --- | --- | --- | --- | --- |
-| ScreenCaptureKit + process-targeted AppKit events | Yes | 12–30 fps | Apple pairing + two Mac grants | Yes |
-| `screencapture -l` + process-targeted AppKit events | Yes | 2–7 fps | Same | Fallback only |
+| ScreenCaptureKit + foreground-only global HID | Yes | 12–30 fps | Apple pairing + two Mac grants | Observation yes; unattended control no |
+| `screencapture -l` + foreground-only global HID | Yes | 2–7 fps | Same | Capture fallback only |
 | H.264/WebRTC over SCK | Yes | 30 fps | More dependencies/protocol surface | Later |
 | Private ScreenSharingKit | Theoretically | Native | Apple-only entitlements/session state | No |
 | USB DVT + WebDriverAgent | Not the locked wireless route | 5–15 fps | Developer Mode, USB/tunnel, signing | Test lab |

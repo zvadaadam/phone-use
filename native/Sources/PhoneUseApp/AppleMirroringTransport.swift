@@ -10,8 +10,6 @@ final class AppleMirroringTransport: @unchecked Sendable {
     private let session: SessionController
     private let capture: MirrorCapture
     private let input: InputController
-    private let intentLock = NSLock()
-    private var sessionIntent = SessionIntent.passive
     private var captureTask: Task<Void, Never>?
     private var sessionMonitorTask: Task<Void, Never>?
 
@@ -42,14 +40,12 @@ final class AppleMirroringTransport: @unchecked Sendable {
         captureTask = nil
         sessionMonitorTask?.cancel()
         sessionMonitorTask = nil
-        setSessionIntent(.closing)
         _ = session.requestClose()
         state.updateSession(.waitingForApplication)
         state.clearFrame()
     }
 
     func ensureSession(timeout: Duration) async throws {
-        setSessionIntent(.requested)
         if state.snapshot().phase == .streaming, target.current() != nil {
             return
         }
@@ -83,22 +79,36 @@ final class AppleMirroringTransport: @unchecked Sendable {
         )
     }
 
-    func send(_ command: ControlCommand) async throws {
+    func send(_ command: ControlCommand) async throws -> InputDelivery {
+        guard let targetSnapshot = target.current() else {
+            throw SessionError(
+                "iPhone Mirroring is no longer connected. Lock the iPhone and try again."
+            )
+        }
+        let isFrontmost =
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+            == targetSnapshot.processID
+        guard isFrontmost else {
+            throw SessionError(
+                "Phone Use never changes Mac focus. Control is unavailable unless iPhone "
+                    + "Mirroring is already frontmost."
+            )
+        }
         guard state.snapshot().phase == .streaming,
-            target.current() != nil,
             session.inspect().state == .candidateLive
         else {
             throw SessionError(
                 "iPhone Mirroring is no longer connected. Lock the iPhone and try again."
             )
         }
-        guard try input.handle(command) else {
+        let delivery = try input.handle(command)
+        guard delivery.eventPosted else {
             throw SessionError("The bridge could not deliver the control command")
         }
+        return delivery
     }
 
     func closeSession() async -> Bool {
-        setSessionIntent(.closing)
         let monitorTask = sessionMonitorTask
         sessionMonitorTask = nil
         monitorTask?.cancel()
@@ -110,14 +120,12 @@ final class AppleMirroringTransport: @unchecked Sendable {
         let closed = await session.close()
         state.updateSession(.waitingForApplication)
         state.clearFrame()
-        setSessionIntent(.passive)
         start()
         return closed
     }
 
     private func monitorSession() async {
         var readiness = MirroringSessionReadiness()
-        var pausedSamples = 0
         while !Task.isCancelled {
             let permissions = BrokerPermissions(
                 screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
@@ -137,7 +145,6 @@ final class AppleMirroringTransport: @unchecked Sendable {
             let inspection = session.inspect()
             switch inspection.state {
             case .candidateLive:
-                pausedSamples = 0
                 let ready = readiness.observe(
                     .candidateLive,
                     captureIsReady: state.captureIsReady()
@@ -146,20 +153,22 @@ final class AppleMirroringTransport: @unchecked Sendable {
             case .paused:
                 readiness.reset()
                 state.updateSession(.waitingForPhone)
-                if currentSessionIntent() == .requested {
-                    if pausedSamples.isMultiple(of: 20) {
-                        _ = session.performReconnectAction(from: inspection)
-                    }
-                    pausedSamples += 1
-                } else {
-                    pausedSamples = 0
-                }
             case .indeterminate:
-                pausedSamples = 0
-                readiness.reset()
-                state.updateSession(.confirming)
-            case .noWindow, .notRunning:
-                pausedSamples = 0
+                let ready = readiness.observe(
+                    .indeterminate,
+                    captureIsReady: state.captureIsReady()
+                )
+                state.updateSession(ready ? .connected : .confirming)
+            case .noWindow:
+                // WindowServer and Accessibility can briefly disagree while
+                // ScreenCaptureKit still delivers the already-verified window.
+                // Preserve continuity only for as long as that capture is fresh.
+                let ready = readiness.observe(
+                    .indeterminate,
+                    captureIsReady: state.captureIsReady()
+                )
+                state.updateSession(ready ? .connected : .waitingForApplication)
+            case .notRunning:
                 readiness.reset()
                 state.updateSession(.waitingForApplication)
             }
@@ -167,21 +176,4 @@ final class AppleMirroringTransport: @unchecked Sendable {
         }
     }
 
-    private func setSessionIntent(_ intent: SessionIntent) {
-        intentLock.lock()
-        sessionIntent = intent
-        intentLock.unlock()
-    }
-
-    private func currentSessionIntent() -> SessionIntent {
-        intentLock.lock()
-        defer { intentLock.unlock() }
-        return sessionIntent
-    }
-}
-
-private enum SessionIntent {
-    case passive
-    case requested
-    case closing
 }

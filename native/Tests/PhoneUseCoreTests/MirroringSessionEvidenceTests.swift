@@ -64,13 +64,13 @@ final class MirroringSessionEvidenceTests: XCTestCase {
         )
     }
 
-    func testHiddenOrDisabledControlsAreIgnored() {
+    func testHiddenOrDisabledControlsLeaveAnOpaqueCandidateLiveWindow() {
         let tree = Element(children: [
             Element(identifier: "app.grid.3x3", isHidden: true),
             Element(identifier: "iphone.app.switcher", isEnabled: false)
         ])
 
-        XCTAssertEqual(MirroringSessionEvidence.classify(root: tree), .paused)
+        XCTAssertEqual(MirroringSessionEvidence.classify(root: tree), .candidateLive)
     }
 
     func testHiddenOrDisabledAncestorsHideTheirEvidence() {
@@ -81,7 +81,7 @@ final class MirroringSessionEvidenceTests: XCTestCase {
             ])
         XCTAssertEqual(
             MirroringSessionEvidence.classify(root: hiddenConnectedTree),
-            .paused
+            .candidateLive
         )
 
         let visibleConnectedTree = Element(children: [
@@ -106,16 +106,16 @@ final class MirroringSessionEvidenceTests: XCTestCase {
         XCTAssertEqual(MirroringSessionEvidence.classify(root: inside), .candidateLive)
 
         let outside = Element(children: [inside])
-        XCTAssertEqual(MirroringSessionEvidence.classify(root: outside), .paused)
+        XCTAssertEqual(MirroringSessionEvidence.classify(root: outside), .indeterminate)
     }
 
-    func testMissingAndUnrelatedControlsArePaused() {
+    func testMissingAndUnrelatedControlsAreIndeterminate() {
         let tree = Element(children: [
             Element(identifier: "CloseButton"),
             Element(role: "AXButton", title: "Settings")
         ])
 
-        XCTAssertEqual(MirroringSessionEvidence.classify(root: tree), .paused)
+        XCTAssertEqual(MirroringSessionEvidence.classify(root: tree), .indeterminate)
     }
 
     func testDescendantReadFailureIsIndeterminateInsteadOfOpaqueLive() {
@@ -150,5 +150,14 @@ final class MirroringSessionEvidenceTests: XCTestCase {
         XCTAssertFalse(readiness.observe(.paused, captureIsReady: true))
         XCTAssertFalse(readiness.observe(.candidateLive, captureIsReady: true))
         XCTAssertTrue(readiness.observe(.candidateLive, captureIsReady: true))
+    }
+
+    func testReadinessPreservesAConfirmedSessionAcrossFreshIndeterminateEvidence() {
+        var readiness = MirroringSessionReadiness(requiredConsecutiveSamples: 2)
+
+        XCTAssertFalse(readiness.observe(.candidateLive, captureIsReady: true))
+        XCTAssertTrue(readiness.observe(.candidateLive, captureIsReady: true))
+        XCTAssertTrue(readiness.observe(.indeterminate, captureIsReady: true))
+        XCTAssertFalse(readiness.observe(.indeterminate, captureIsReady: false))
     }
 }

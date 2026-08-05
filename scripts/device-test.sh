@@ -14,7 +14,24 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-STATUS_JSON=$("${PROJECT_DIR}/native/.build/release/phone-use" status)
+STATUS_JSON=""
+for _ in {1..40}; do
+  STATUS_JSON=$("${PROJECT_DIR}/native/.build/release/phone-use" status)
+  if STATUS_JSON="${STATUS_JSON}" node -e '
+    const status = JSON.parse(process.env.STATUS_JSON);
+    process.exit(
+      status.phase === "streaming"
+        && status.fps >= 8
+        && status.frameAgeMs != null
+        && status.frameAgeMs <= 2000
+        && status.captureMode === "screenCaptureKit"
+        ? 0 : 1,
+    );
+  '; then
+    break
+  fi
+  sleep 0.25
+done
 STATUS_JSON="${STATUS_JSON}" node -e '
   const status = JSON.parse(process.env.STATUS_JSON);
   if (status.phase !== "streaming") {
