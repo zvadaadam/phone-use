@@ -98,7 +98,7 @@ async function pollStatus() {
     if (!authorizationReported) {
       addLog(
         error.message === "Status 401"
-          ? "Open this dashboard from the Mirror Relay menu or CLI"
+          ? "Open this dashboard from the Phone Use menu or CLI"
           : `Bridge status unavailable: ${error.message}`,
       );
       authorizationReported = true;

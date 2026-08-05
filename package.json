@@ -1,23 +1,34 @@
 {
-  "name": "mirror-relay",
-  "version": "0.8.0",
+  "name": "@zvadaadam/phone-use",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "Local authenticated bridge for observing and controlling a locked iPhone through Apple iPhone Mirroring.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zvadaadam/phone-use.git"
+  },
+  "homepage": "https://github.com/zvadaadam/phone-use#readme",
+  "bugs": {
+    "url": "https://github.com/zvadaadam/phone-use/issues"
+  },
   "scripts": {
     "build:native": "swift build -c release --package-path native",
     "package:app": "zsh scripts/package-app.sh",
+    "package:dev": "PHONE_USE_REQUIRE_STABLE_SIGNING=1 zsh scripts/package-app.sh",
     "package:release": "zsh scripts/package-release.sh",
+    "signing:doctor": "zsh scripts/signing-doctor.sh",
     "verify:package": "zsh scripts/verify-package.sh",
-    "open:app": "open 'dist/Mirror Relay.app'",
-    "relay": "zsh scripts/mirror-relayctl",
-    "start": "npm run relay -- dashboard",
+    "open:app": "open 'dist/Phone Use.app'",
+    "phone-use": "zsh scripts/phone-use",
+    "start": "npm run phone-use -- dashboard",
     "test": "npm run test:node && npm run test:native && npm run test:integration",
     "test:node": "node --test",
     "test:native": "swift test --package-path native",
     "test:integration": "zsh scripts/integration-test.sh",
     "test:smoke": "zsh scripts/smoke-test.sh",
     "test:device": "zsh scripts/device-test.sh",
+    "test:focus": "zsh scripts/focus-test.sh",
     "check": "npm test && swift build -c release --package-path native -Xswiftc -warnings-as-errors && npm run package:app"
   },
   "engines": {

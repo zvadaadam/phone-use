@@ -5,21 +5,21 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>Mirror Relay</string>
+  <string>Phone Use</string>
   <key>CFBundleExecutable</key>
-  <string>Mirror Relay</string>
+  <string>Phone Use</string>
   <key>CFBundleIdentifier</key>
   <string>com.adamzvada.mirrorrelay</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Mirror Relay</string>
+  <string>Phone Use</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.8.0</string>
+  <string>0.9.0</string>
   <key>CFBundleVersion</key>
-  <string>9</string>
+  <string>10</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key>
@@ -31,6 +31,6 @@
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © 2026 Adam Zvada. All rights reserved.</string>
   <key>NSScreenCaptureUsageDescription</key>
-  <string>Mirror Relay captures only Apple’s iPhone Mirroring window so authorized local agents can observe and control your iPhone.</string>
+  <string>Phone Use captures only Apple’s iPhone Mirroring window so authorized local agents can observe and control your iPhone.</string>
 </dict>
 </plist>

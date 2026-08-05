@@ -1,232 +1,274 @@
-# Mirror Relay
+# Phone Use
 
-Mirror Relay is a local macOS broker that lets authorized agents observe and
-control a real, powered-on iPhone through Apple’s iPhone Mirroring app.
+Use a real iPhone from an AI agent running on your Mac.
 
-```text
-agent CLI / authenticated dashboard
-        ↕ HTTP on 127.0.0.1:8747
-Mirror Relay menu-bar app
-        ↕ ScreenCaptureKit + verified HID input
-Apple iPhone Mirroring
-        ↕ Apple Continuity
-nearby, powered-on, locked iPhone
-```
+<p align="center">
+  <img src="docs/assets/phone-use-hero.jpg" width="1200" alt="A real iPhone showing Apple’s iPhone in Use notice beside an explanation of how a local AI agent uses Phone Use">
+</p>
 
-The browser does not embed Apple’s private UI and Mirror Relay does not patch or
-inject into Apple processes. It streams only the authorized iPhone Mirroring
-window through Apple’s public ScreenCaptureKit API, encodes frames in memory,
-maps normalized coordinates to that window, verifies the target before every
-input event, and posts ordinary macOS HID events.
+Phone Use gives local agents a simple way to see the current iPhone screen,
+tap, swipe, type, and use system controls through Apple’s iPhone Mirroring.
+The phone stays paired through Apple’s normal Continuity flow; Phone Use does
+not jailbreak the device, bypass its passcode, or send the screen to a cloud
+service.
 
-## Product boundary
+Phone Use is useful for:
 
-Mirror Relay can:
+- checking Messages, Mail, calendars, notifications, or another mobile-only
+  app without taking your hands away from the Mac;
+- letting an agent complete a multi-step task while you continue working in a
+  different Mac window;
+- testing a website or app on a physical iPhone rather than a simulator;
+- navigating an app and stopping before a sensitive action such as sending,
+  deleting, purchasing, or publishing;
+- giving an agent visual, pixel-based access to an app that has no API.
 
-- open and close Apple iPhone Mirroring on demand;
-- stream the visible iPhone screen to a local authenticated dashboard;
-- return an individual JPEG frame to an agent;
-- tap, swipe, type, and invoke Home, App Switcher, or Spotlight;
-- start at Mac login and remain available as a menu-bar app.
+## Requirements
 
-It cannot:
+- an Apple silicon Mac running macOS 15 or newer;
+- an iPhone that already works with Apple’s **iPhone Mirroring** app;
+- both devices signed in and configured for Apple’s normal Mirroring flow;
+- the iPhone powered on, nearby, and locked while the agent uses it;
+- Wi-Fi and Bluetooth enabled.
 
-- operate a powered-off or distant iPhone;
-- bypass a passcode, Apple Account, region, or Continuity requirement;
-- expose a semantic iOS accessibility tree;
-- guarantee compatibility with future macOS releases because Apple publishes no
-  iPhone Mirroring automation SDK.
+Phone Use cannot operate a powered-off or distant phone. It cannot bypass an
+Apple Account, passcode, regional restriction, or the normal iPhone Mirroring
+requirements.
 
-The iPhone must be powered on, nearby, and locked. Apple’s first connection or
-recovery flow may require the phone to have been unlocked recently. Wi-Fi,
-Bluetooth, and Apple’s normal iPhone Mirroring prerequisites still apply.
+## Install
 
-## Install and one-time setup
+### Current private preview: build from source
 
-Requirements:
-
-- macOS 15 or newer;
-- Apple iPhone Mirroring already paired with the iPhone;
-- Xcode command-line tools for source builds;
-- Node.js 20 or newer for tests and packaging.
-
-Build the local app:
+Source builds require Xcode command-line tools and Node.js 20 or newer:
 
 ```sh
 npm install
+npm run signing:doctor
+npm run package:dev
+open dist
+```
+
+Drag `Phone Use.app` from `dist` into **Applications**, then open it.
+
+`package:dev` requires a stable Apple Development or local code-signing
+identity so macOS permission grants survive rebuilds. See
+[PACKAGING.md](PACKAGING.md) for developer signing setup.
+
+### Homebrew — recommended release channel after launch
+
+The signed Homebrew channel is prepared but not published yet. Once the first
+release is available, install it with:
+
+```sh
+brew tap zvadaadam/tap
+brew install --cask phone-use
+open -a "Phone Use"
+```
+
+The Cask installs both `Phone Use.app` and the `phone-use` command.
+
+### Signed disk image — after launch
+
+Once published, download `Phone-Use-<version>.dmg` from the
+[latest release](https://github.com/zvadaadam/homebrew-tap/releases/latest),
+open it, and drag **Phone Use** to **Applications**. The release DMG, app, and
+embedded CLI are Developer ID-signed and notarized.
+
+Commands below use `phone-use`, which Homebrew adds to your `PATH`. With a DMG
+install, use `/Applications/Phone Use.app/Contents/Helpers/phone-use`. From a
+source checkout, use `./scripts/phone-use`.
+
+## One-time setup
+
+1. Open Apple’s **iPhone Mirroring** app and confirm it can connect to your
+   iPhone normally.
+2. Quit iPhone Mirroring, lock the iPhone, and keep it nearby.
+3. Open **Phone Use**. It appears in the Mac menu bar.
+4. In **System Settings → Privacy & Security**, grant **Phone Use**:
+   - **Screen & System Audio Recording**;
+   - **Accessibility**.
+5. Quit and reopen Phone Use after changing either permission.
+6. Check the setup:
+
+```sh
+phone-use doctor
+```
+
+Both permission fields should be `true`. These grants normally happen once for
+the signed app; upgrading the same release should not ask again.
+
+## Start using it
+
+Open the local dashboard:
+
+```sh
+phone-use dashboard
+```
+
+The dashboard shows the live phone surface. Click or drag on the phone image,
+send text to the focused field, or use **Home**, **Apps**, and **Search**. Phone
+Use deliberately sends input to iPhone Mirroring without raising it over the
+Mac app you are currently using.
+
+For agents and scripts, the CLI exposes the same flow:
+
+```sh
+phone-use open
+phone-use status
+phone-use observe /tmp/iphone.jpg
+phone-use tap 0.50 0.72
+phone-use swipe 0.50 0.80 0.50 0.25 350
+phone-use type "hello from my Mac"
+phone-use home
+phone-use apps
+phone-use spotlight
+phone-use close
+```
+
+Tap and swipe coordinates are normalized from `0` to `1`, starting at the
+top-left of the visible iPhone screen. Agents should take a fresh screenshot,
+decide on one action, perform it, and observe again.
+
+## Example prompts for an agent
+
+The best prompts state the task, the allowed actions, and where the agent must
+stop.
+
+### Check unread messages without sending anything
+
+> Use Phone Use to open my iPhone and inspect Messages. Tell me which
+> conversations appear unread and summarize only what is visible. Do not type,
+> send, delete, or mark anything as read if that can be avoided. Close the
+> Phone Use session when finished.
+
+### Check the latest email
+
+> Use Phone Use to open Mail on my iPhone. Find the newest inbox message and
+> report the sender, subject, time, and a short summary. Treat this as read-only:
+> do not reply, archive, delete, follow links, or download attachments.
+
+### Draft a response but stop before sending
+
+> Use Phone Use to open my most recent conversation with Alex. Draft this
+> reply: “I can join at 3 PM.” Stop before tapping Send and show me the final
+> composed message for approval.
+
+### Navigate to a setting
+
+> Use Phone Use to find the notification settings for Slack on my iPhone.
+> Explain the current settings and stop before changing any toggle.
+
+### Test a mobile flow on the physical phone
+
+> Use Phone Use to open our staging app and test sign-in with the provided test
+> account. Capture a fresh screenshot after every step, report any visual or
+> interaction failure, and sign out when finished. Do not change device-wide
+> settings or use a production account.
+
+### Open an app and complete a bounded task
+
+> Use Phone Use to open Spotify, search for “Discovery Weekly,” and open the
+> playlist. Do not start playback, follow an artist, or modify my library.
+
+For consequential tasks, explicitly require the agent to stop before the final
+send, purchase, delete, publish, account, permission, or security action.
+
+## CLI reference
+
+| Command | Result |
+| --- | --- |
+| `phone-use dashboard` | Open the authenticated local dashboard |
+| `phone-use doctor` | Check installation, permissions, and Mirroring |
+| `phone-use status` | Return the current session and frame status |
+| `phone-use open` | Open or reconnect the iPhone Mirroring session |
+| `phone-use observe <file.jpg>` | Save one fresh phone screenshot |
+| `phone-use tap <x> <y>` | Tap a normalized screen coordinate |
+| `phone-use swipe <x> <y> <x2> <y2> [ms]` | Perform one swipe |
+| `phone-use type <text>` | Type into the currently focused phone field |
+| `phone-use home` | Go to the iPhone Home Screen |
+| `phone-use apps` | Open the iPhone App Switcher |
+| `phone-use spotlight` | Open iPhone Search |
+| `phone-use close` | Close Mirroring and clear the current frame |
+| `phone-use version` | Print the installed version |
+
+The packaged helper is also available at:
+
+```text
+/Applications/Phone Use.app/Contents/Helpers/phone-use
+```
+
+Agents should use the CLI or dashboard instead of reading the local bearer
+token directly.
+
+## What to expect
+
+- Phone Use is visual and pixel-based. It does not expose a semantic iOS
+  accessibility tree, so agents must observe again after acting.
+- The physical iPhone cannot be used directly while an active Mirroring
+  session controls it. Unlocking or using the phone may pause the session.
+- The first Apple connection or a recovery flow can require you to unlock the
+  phone manually once.
+- Some protected, video, banking, authentication, or DRM surfaces may hide
+  content or prevent interaction.
+- Apple does not publish an iPhone Mirroring automation SDK, so a future macOS
+  update may require a Phone Use update.
+- Phone Use is not a remote-device farm, simulator service, or general iPhone
+  management API.
+
+## Privacy and safety
+
+Phone Use runs locally on the Mac and listens only on `127.0.0.1:8747`. The
+dashboard and every API route require local authentication. Screenshots are
+processed in memory and are not kept as a recording; `phone-use observe` writes
+only the image path you explicitly request.
+
+Anyone who can control your logged-in macOS account and invoke `phone-use` can
+operate the paired phone. Do not expose, proxy, or tunnel port `8747`, and do
+not give an agent broader phone authority than the task requires.
+
+Read [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md) for the complete
+security and data-handling model.
+
+## Troubleshooting
+
+### `Waiting for iPhone Mirroring`
+
+- Confirm Apple’s iPhone Mirroring app works by itself.
+- Keep the iPhone powered on, nearby, and locked.
+- Enable Wi-Fi and Bluetooth on both devices.
+- If you recently used or restarted the iPhone, unlock it manually once, then
+  lock it again.
+- Run `phone-use close`, then `phone-use open`.
+
+### Permission check is false
+
+Open **System Settings → Privacy & Security**, enable Phone Use under both
+**Screen & System Audio Recording** and **Accessibility**, then quit and reopen
+Phone Use. Grant permissions to the installed `/Applications/Phone Use.app`,
+not a temporary or ad-hoc development build.
+
+### The screen is visible but control fails
+
+- Lock the physical iPhone and wait for Mirroring to reconnect.
+- Run `phone-use doctor` and `phone-use status`.
+- Make sure another copy of Phone Use is not running from `dist` or Downloads.
+- Close and reopen the session before retrying the action.
+
+## For contributors
+
+```sh
+npm test
 npm run check
+npm run test:smoke
+npm run test:device
+npm run test:focus
 ```
 
-Copy `dist/Mirror Relay.app` to `/Applications`, open it, and grant the exact
-installed app:
+Implementation and release details live outside the user guide:
 
-- **Privacy & Security → Screen & System Audio Recording**
-- **Privacy & Security → Accessibility**
-
-Relaunch Mirror Relay after changing either permission. Ad-hoc local builds can
-need their grants refreshed when the binary changes. A Developer ID-signed
-release preserves a stable signing identity.
-
-Public releases are distributed as a notarized `Mirror Relay-<version>.dmg`.
-Drag the app to the Applications shortcut in the disk image. The app, its Swift
-CLI helper, and the disk image are signed; Bun, Node, Electron, and JavaScript
-runtimes are not shipped.
-
-The EU eligibility enabler is not part of Mirror Relay. If Apple’s app already
-connects, do not modify the macOS eligibility database.
-
-## Agent CLI
-
-Use the wrapper so agents never read or handle the bearer token directly:
-
-```sh
-./scripts/mirror-relayctl dashboard
-./scripts/mirror-relayctl doctor
-./scripts/mirror-relayctl status
-./scripts/mirror-relayctl open
-./scripts/mirror-relayctl observe /tmp/iphone.jpg
-./scripts/mirror-relayctl tap 0.50 0.72
-./scripts/mirror-relayctl swipe 0.50 0.80 0.50 0.25 350
-./scripts/mirror-relayctl type "hello"
-./scripts/mirror-relayctl home
-./scripts/mirror-relayctl apps
-./scripts/mirror-relayctl spotlight
-./scripts/mirror-relayctl close
-./scripts/mirror-relayctl version
-```
-
-The packaged Swift helper lives at:
-
-```text
-/Applications/Mirror Relay.app/Contents/Helpers/mirror-relay
-```
-
-It discovers its enclosing app before consulting Launch Services, launches the
-broker when needed, and rejects stale brokers with a different product or wire
-protocol version. The helper does not link ScreenCaptureKit and does not need a
-separate Screen Recording grant.
-
-Coordinates are normalized from `0` to `1`. Tap and swipe are atomic commands;
-the broker serializes all open, control, and close operations. Action responses
-include frame IDs and whether a fresh frame changed after the command.
-
-`npm start` opens the authenticated dashboard through the installed CLI.
-
-## Local API
-
-Mirror Relay listens only on `127.0.0.1:8747`. Its 256-bit agent bearer token is
-stored in a `0700` directory with `0600` file permissions:
-
-```text
-~/Library/Application Support/Mirror Relay/token
-```
-
-Every route, including `/health` and static dashboard assets, requires the
-bearer token or an authenticated dashboard session. The one-time dashboard
-bootstrap URL is itself an expiring credential.
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Broker liveness and permission summary |
-| `GET` | `/api/status` | Phase, capture mode, frame age, dimensions, and recent logs |
-| `GET` | `/api/observe` | Fresh JPEG plus `X-Frame-ID` |
-| `GET` | `/stream.mjpeg` | Live multipart JPEG stream |
-| `POST` | `/api/session/open` | Open and wait for a live session |
-| `POST` | `/api/session/close` | Close Mirroring and clear the cached frame |
-| `POST` | `/api/act` | Deliver a validated atomic control command |
-| `POST` | `/api/dashboard/bootstrap` | Create a one-time dashboard link |
-
-The CLI authenticates with the bearer token. The browser never receives that
-long-lived token: a single-use, 60-second bootstrap link is exchanged for an
-eight-hour, in-memory, HttpOnly, SameSite-strict session cookie. Bootstrap links
-cannot be replayed and dashboard sessions disappear when Mirror Relay quits.
-
-## Security and privacy model
-
-- The broker binds only to IPv4 loopback and uses Network.framework’s
-  local-only mode.
-- Observation and control endpoints require a bearer token or dashboard
-  session.
-- Browser requests with an `Origin` header reject cross-origin access.
-- Every HTTP request must use the literal `127.0.0.1:<port>` host, preventing a
-  DNS-rebinding origin from reaching the broker.
-- Commands are bounded and validated, and mutations run in FIFO order.
-- Pointer gestures are sent as one tap or swipe instead of interleaved phases.
-- Input revalidates the target PID, window ID, bounds, frontmost application,
-  and topmost window before every event and throughout a swipe.
-- Capture is window-only and fails closed; it never falls back to a screen
-  region that could contain unrelated Mac windows.
-- The primary capture path is an in-memory ScreenCaptureKit stream capped at 15
-  JPEG frames per second. If that stream cannot start, the broker retries it
-  while using an exact-window `screencapture -l` fallback. The same hardened
-  fallback supplies heartbeat frames when ScreenCaptureKit intentionally idles
-  on an unchanged screen.
-- Closing or losing the session clears the cached frame, and observations older
-  than three seconds are rejected.
-- No LAN listener, cloud relay, passcode handling, jailbreak, private
-  entitlement injection, or WebDriverAgent server is included.
-
-The normal ScreenCaptureKit path keeps source frames and JPEG encoding in
-memory. Apple’s fallback `screencapture` service requires a file destination;
-only when that fallback is active does a source PNG briefly exist inside a
-per-user `0700` scratch directory. It is set to `0600`, converted to JPEG in
-memory, and deleted immediately. Stale scratch files are scrubbed at startup.
-Mirror Relay does not retain frames, typed text, or interaction history. An
-explicit CLI `observe` command writes the requested JPEG to the caller’s chosen
-path.
-
-Anyone controlling this macOS account and able to invoke the CLI can operate the
-paired phone. Do not proxy or tunnel port 8747.
-
-## Tests
-
-```sh
-npm test                 # Node, Swift, and isolated broker integration
-npm run test:smoke       # exact installed app
-npm run test:device      # opt-in live paired-iPhone stream/fps check
-npm run verify:package   # bundle layout, versions, links, and signatures
-npm run check            # tests, warnings-as-errors release build, package
-```
-
-The integration test verifies loopback binding, bearer authentication,
-single-use dashboard exchange, hardened cookies, host/origin rejection,
-protocol metadata, validation, and token permissions. Native tests cover
-command validation, operation
-serialization, fallback capture commands, stream frame-rate gating and sizing,
-and Mirroring-window selection.
-
-## Release packaging
-
-`npm run package:app` produces an ad-hoc signed local-development app.
-
-A distributable build must use Apple Developer credentials:
-
-```sh
-export MIRROR_RELAY_SIGN_IDENTITY="Developer ID Application: …"
-export MIRROR_RELAY_NOTARY_PROFILE="mirror-relay-notary"
-npm run package:release
-```
-
-The release command signs nested executables, submits the archive to Apple
-notary service, staples and validates the app and disk-image tickets, checks
-Gatekeeper acceptance, and creates `dist/Mirror Relay-<version>.dmg` plus a
-SHA-256 file. It fails closed when either credential is missing. See
-[PACKAGING.md](PACKAGING.md) for the identity policy and release checklist.
-
-## Source layout
-
-- `native/Sources/MirrorCore` — capture, verified input, policies, and FIFO lock.
-- `native/Sources/MirrorRelayProtocol` — runtime-independent wire commands,
-  bundle discovery, and compatibility version.
-- `native/Sources/MirrorRelayApp` — menu-bar lifecycle, broker state, auth, and
-  local HTTP server.
-- `native/Sources/MirrorRelayCLI` — token-hiding agent CLI.
-- `native/Tests` — native behavior and concurrency tests.
-- `public` — authenticated local dashboard.
-- `scripts` — packaging, release, integration, and installed-app smoke checks.
-- `test` — browser geometry tests.
-
-The repository comparison and platform evidence are documented in
-[RESEARCH.md](RESEARCH.md) and [FEASIBILITY.md](FEASIBILITY.md). Release history,
-privacy details, and the security boundary live in [CHANGELOG.md](CHANGELOG.md),
-[PRIVACY.md](PRIVACY.md), and [SECURITY.md](SECURITY.md).
+- [PACKAGING.md](PACKAGING.md) — signing, notarization, DMG, and Homebrew;
+- [SECURITY.md](SECURITY.md) — authentication and control boundaries;
+- [PRIVACY.md](PRIVACY.md) — frame, text, and local-data handling;
+- [FEASIBILITY.md](FEASIBILITY.md) — Apple platform constraints;
+- [RESEARCH.md](RESEARCH.md) — prior-art and transport research;
+- [CHANGELOG.md](CHANGELOG.md) — release history.

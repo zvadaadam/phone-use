@@ -8,11 +8,11 @@ fi
 
 APP_DIR="${1:A}"
 DMG="${2:A}"
-STAGE_DIR=$(mktemp -d /tmp/mirror-relay-dmg.XXXXXX)
+STAGE_DIR=$(mktemp -d /tmp/phone-use-dmg.XXXXXX)
 
 cleanup() {
   case "${STAGE_DIR}" in
-    /tmp/mirror-relay-dmg.*) rm -rf "${STAGE_DIR}" ;;
+    /tmp/phone-use-dmg.*) rm -rf "${STAGE_DIR}" ;;
   esac
 }
 trap cleanup EXIT INT TERM
@@ -28,10 +28,10 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "${DMG:h}"
 rm -f "${DMG}"
-ditto "${APP_DIR}" "${STAGE_DIR}/Mirror Relay.app"
+ditto "${APP_DIR}" "${STAGE_DIR}/Phone Use.app"
 ln -s /Applications "${STAGE_DIR}/Applications"
 hdiutil create \
-  -volname "Mirror Relay" \
+  -volname "Phone Use" \
   -srcfolder "${STAGE_DIR}" \
   -format UDZO \
   -ov \

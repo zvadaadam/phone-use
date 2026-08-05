@@ -1,13 +1,13 @@
 # iPhone Mirroring Automation Repository Review
 
-Review date: 2026-07-30.
+Review updated: 2026-08-04.
 
 ## Recommendation
 
 Use [`leeguooooo/iphone-use`](https://github.com/leeguooooo/iphone-use) as the
 primary high-performance capture reference and
 [`jfarcand/mirroir-mcp`](https://github.com/jfarcand/mirroir-mcp) as the
-pixel-control and agent-tool reference. Keep Mirror Relay's smaller
+pixel-control and agent-tool reference. Keep Phone Use's smaller
 authenticated loopback API and dashboard.
 
 ## `leeguooooo/iphone-use`
@@ -19,11 +19,11 @@ Best capture-performance evidence.
   iPhone Mirroring window.
 - Receives BGRA frames at roughly 30 fps, then uses VideoToolbox H.264 and
   WebRTC for browser transport.
-- Uses global HID events for control and confirms targeted `postToPid` input
-  does not operate Mirroring.
+- Uses global HID events for control after directly-created targeted CGEvents
+  proved insufficient in that implementation.
 - Includes a single-controller lease and a broader LAN/WebRTC product surface.
 
-Mirror Relay adopts the public ScreenCaptureKit window stream, but not WebRTC
+Phone Use adopts the public ScreenCaptureKit window stream, but not WebRTC
 or LAN access. In-memory JPEG over the existing authenticated loopback MJPEG
 route is substantially smaller, preserves the security model, and measured
 12–14 end-to-end fps on this Mac. H.264/WebRTC remains a later option if remote
@@ -36,8 +36,8 @@ Best agent-tool and control reference.
 - Native Swift MCP server with an actively maintained release history.
 - Locates and classifies Apple's Mirroring window with AX and WindowServer data.
 - Captures through `screencapture -l`, with `screencapture -R` as a fallback.
-- Uses global HID-level `CGEvent` input because `postToPid` does not register
-  taps in iPhone Mirroring.
+- Uses global HID-level `CGEvent` input because its directly-created
+  `postToPid` events did not register taps in iPhone Mirroring.
 - Implements trackpad-like phased scrolling for iOS swipes.
 - Adds Apple Vision OCR and optional model-based perception.
 - Exposes a broad MCP tool surface with fail-closed, read-only permissions by
@@ -56,9 +56,14 @@ Local verification:
   library was absent, so the release binary was more reliable than a clean
   source build on this machine.
 
-Mirror Relay adopts its window classification and global HID lessons, not its
-process-per-frame capture path or full 33-tool MCP surface. The local HTTP API
-is easier for the browser dashboard and for agents that are not MCP clients.
+Phone Use adopts its window-classification and phased-scroll lessons, not
+its process-per-frame capture path, foreground HID delivery, or full 33-tool
+MCP surface. Local testing found a narrower background route: start pointer
+events as AppKit `NSEvent` envelopes, add the destination window's WindowServer
+metadata, then use `postToPid`. Directly-created CGEvents with only the public
+fields still failed, which explains the earlier projects' result. The local
+HTTP API is easier for the browser dashboard and for agents that are not MCP
+clients.
 
 ## `Pauli1Go/iphone-mirroring-eu-enabler`
 
@@ -77,7 +82,7 @@ Risks:
 - can be invalidated by macOS updates;
 - broad eligibility edits are unrelated to agent control.
 
-Mirror Relay does not run or embed it. If the native app already opens and
+Phone Use does not run or embed it. If the native app already opens and
 connects, there is no reason to touch the eligibility database.
 
 ## `Dennisjoch/iPhoneMirroring`
@@ -92,7 +97,7 @@ It combines:
 
 It confirms why WebDriverAgent is not part of the launch product: the route is
 more deterministic for a test lab, but adds onboarding and does not provide the
-seamless locked-iPhone session Mirror Relay is designed around.
+seamless locked-iPhone session Phone Use is designed around.
 
 ## Other relevant projects
 
@@ -136,8 +141,8 @@ operate a powered-off phone.
 
 | Route | Real locked phone | Smoothness | Setup | Launchable |
 | --- | --- | --- | --- | --- |
-| ScreenCaptureKit + HID | Yes | 12–30 fps | Apple pairing + two Mac grants | Yes |
-| `screencapture -l` + HID | Yes | 2–7 fps | Same | Fallback only |
+| ScreenCaptureKit + process-targeted AppKit events | Yes | 12–30 fps | Apple pairing + two Mac grants | Yes |
+| `screencapture -l` + process-targeted AppKit events | Yes | 2–7 fps | Same | Fallback only |
 | H.264/WebRTC over SCK | Yes | 30 fps | More dependencies/protocol surface | Later |
 | Private ScreenSharingKit | Theoretically | Native | Apple-only entitlements/session state | No |
 | USB DVT + WebDriverAgent | Not the locked wireless route | 5–15 fps | Developer Mode, USB/tunnel, signing | Test lab |

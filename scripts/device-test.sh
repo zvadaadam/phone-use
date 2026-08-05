@@ -4,17 +4,17 @@ set -euo pipefail
 SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
 BASE_URL="http://127.0.0.1:8747"
-TOKEN_FILE="${HOME}/Library/Application Support/Mirror Relay/token"
-TEMP_DIR=$(mktemp -d /tmp/mirror-relay-device.XXXXXX)
+TOKEN_FILE="${HOME}/Library/Application Support/Phone Use/token"
+TEMP_DIR=$(mktemp -d /tmp/phone-use-device.XXXXXX)
 
 cleanup() {
   case "${TEMP_DIR}" in
-    /tmp/mirror-relay-device.*) rm -rf "${TEMP_DIR}" ;;
+    /tmp/phone-use-device.*) rm -rf "${TEMP_DIR}" ;;
   esac
 }
 trap cleanup EXIT INT TERM
 
-STATUS_JSON=$("${PROJECT_DIR}/native/.build/release/mirror-relayctl" status)
+STATUS_JSON=$("${PROJECT_DIR}/native/.build/release/phone-use" status)
 STATUS_JSON="${STATUS_JSON}" node -e '
   const status = JSON.parse(process.env.STATUS_JSON);
   if (status.phase !== "streaming") {
@@ -31,7 +31,7 @@ STATUS_JSON="${STATUS_JSON}" node -e '
   }
 '
 
-"${PROJECT_DIR}/native/.build/release/mirror-relayctl" \
+"${PROJECT_DIR}/native/.build/release/phone-use" \
   observe "${TEMP_DIR}/iphone.jpg" >/dev/null
 WIDTH=$(sips -g pixelWidth "${TEMP_DIR}/iphone.jpg" | awk '/pixelWidth/ { print $2 }')
 HEIGHT=$(sips -g pixelHeight "${TEMP_DIR}/iphone.jpg" | awk '/pixelHeight/ { print $2 }')

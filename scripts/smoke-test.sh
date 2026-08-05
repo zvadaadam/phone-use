@@ -4,25 +4,25 @@ set -euo pipefail
 SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
 BASE_URL="http://127.0.0.1:8747"
-TOKEN_FILE="${HOME}/Library/Application Support/Mirror Relay/token"
-TEMP_DIR=$(mktemp -d /tmp/mirror-relay-smoke.XXXXXX)
+TOKEN_FILE="${HOME}/Library/Application Support/Phone Use/token"
+TEMP_DIR=$(mktemp -d /tmp/phone-use-smoke.XXXXXX)
 EXPECTED_VERSION=$(/usr/bin/plutil -extract version raw -o - "${PROJECT_DIR}/package.json")
 
 cleanup() {
   case "${TEMP_DIR}" in
-    /tmp/mirror-relay-smoke.*) rm -rf "${TEMP_DIR}" ;;
+    /tmp/phone-use-smoke.*) rm -rf "${TEMP_DIR}" ;;
   esac
 }
 trap cleanup EXIT INT TERM
 
-"${SCRIPT_DIR}/mirror-relayctl" status >/dev/null
-if [[ "$("${SCRIPT_DIR}/mirror-relayctl" version)" != "Mirror Relay ${EXPECTED_VERSION}" ]]; then
+"${SCRIPT_DIR}/phone-use" status >/dev/null
+if [[ "$("${SCRIPT_DIR}/phone-use" version)" != "Phone Use ${EXPECTED_VERSION}" ]]; then
   print -u2 "FAIL: installed CLI is not version ${EXPECTED_VERSION}"
   exit 1
 fi
 
 if [[ ! -f "${TOKEN_FILE}" ]]; then
-  print -u2 "FAIL: Mirror Relay did not create its local token"
+  print -u2 "FAIL: Phone Use did not create its local token"
   exit 1
 fi
 if [[ "$(stat -f '%Lp' "${TOKEN_FILE}")" != "600" ]]; then
@@ -80,4 +80,4 @@ if [[ "${listener}" != *"127.0.0.1:8747"* ]]; then
   exit 1
 fi
 
-print "PASS: Mirror Relay local API, authentication, validation, and token permissions"
+print "PASS: Phone Use local API, authentication, validation, and token permissions"

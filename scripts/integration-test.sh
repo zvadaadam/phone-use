@@ -5,8 +5,8 @@ SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
 API_PORT=18749
 BASE_URL="http://127.0.0.1:${API_PORT}"
-TOKEN_FILE="${HOME}/Library/Application Support/Mirror Relay/token"
-TEMP_DIR=$(mktemp -d /tmp/mirror-relay-integration.XXXXXX)
+TOKEN_FILE="${HOME}/Library/Application Support/Phone Use/token"
+TEMP_DIR=$(mktemp -d /tmp/phone-use-integration.XXXXXX)
 BROKER_PID=""
 
 cleanup() {
@@ -15,7 +15,7 @@ cleanup() {
     wait "${BROKER_PID}" 2>/dev/null || true
   fi
   case "${TEMP_DIR}" in
-    /tmp/mirror-relay-integration.*) rm -rf "${TEMP_DIR}" ;;
+    /tmp/phone-use-integration.*) rm -rf "${TEMP_DIR}" ;;
   esac
 }
 trap cleanup EXIT INT TERM
@@ -27,9 +27,9 @@ fi
 
 swift build --package-path "${PROJECT_DIR}/native" >/dev/null
 
-MIRROR_RELAY_PORT="${API_PORT}" \
-MIRROR_RELAY_PUBLIC_DIR="${PROJECT_DIR}/public" \
-  "${PROJECT_DIR}/native/.build/debug/mirror-relay" \
+PHONE_USE_PORT="${API_PORT}" \
+PHONE_USE_PUBLIC_DIR="${PROJECT_DIR}/public" \
+  "${PROJECT_DIR}/native/.build/debug/phone-use-app" \
   >"${TEMP_DIR}/broker.log" 2>&1 &
 BROKER_PID=$!
 
@@ -78,6 +78,7 @@ assert_code 200 -H "${AUTH_HEADER}" "${BASE_URL}/api/status"
 status_json=$(curl -fsS -H "${AUTH_HEADER}" "${BASE_URL}/api/status")
 STATUS_JSON="${status_json}" node -e '
   const value = JSON.parse(process.env.STATUS_JSON);
+  if (value.product !== "phone-use") throw new Error("unexpected product identifier");
   if (value.protocolVersion !== 1) throw new Error("unexpected protocol version");
   if (typeof value.version !== "string") throw new Error("missing product version");
 '
@@ -100,7 +101,7 @@ assert_code 303 \
   -D "${TEMP_DIR}/bootstrap.headers" \
   -c "${TEMP_DIR}/cookies.txt" \
   "${BASE_URL}${bootstrap_path}"
-if ! rg -qi '^Set-Cookie: MirrorRelaySession=.*HttpOnly; SameSite=Strict;' \
+if ! rg -qi '^Set-Cookie: PhoneUseSession=.*HttpOnly; SameSite=Strict;' \
   "${TEMP_DIR}/bootstrap.headers"; then
   print -u2 "FAIL: dashboard session cookie is not hardened"
   exit 1
