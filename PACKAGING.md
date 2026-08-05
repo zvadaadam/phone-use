@@ -112,13 +112,29 @@ The release pipeline:
 4. notarizes and staples the app;
 5. creates a compressed DMG with an `/Applications` shortcut;
 6. signs, notarizes, staples, and Gatekeeper-checks the DMG;
-7. writes `Phone Use-<version>.dmg.sha256`.
+7. writes `Phone-Use-<version>.dmg.sha256` and renders a checksum-pinned Cask
+   at `dist/homebrew/Casks/phone-use.rb`.
 
 App notarization happens before DMG creation so the copy inside the disk image
 also carries a stapled ticket. Release packaging fails before modifying an
 artifact when credentials or the Developer ID identity are missing. The DMG is
 built and validated under a temporary name, then atomically replaces the public
 artifact only after every release check succeeds.
+
+The release artifact uses a URL-safe filename so the same bytes can be uploaded
+to a `phone-use-v<version>` release in the dedicated
+`zvadaadam/homebrew-tap` repository and consumed by Homebrew without URL
+rewriting. Publish the generated Cask from that tap as well. This keeps the
+source repository private while giving ordinary Homebrew clients one public
+binary owner. For a local installation proof before publishing, render a
+second Cask with an exact file URL:
+
+```sh
+PHONE_USE_CASK_LOCAL=1 \
+  scripts/render-cask.sh \
+  "dist/Phone-Use-<version>.dmg" \
+  "dist/homebrew-local/Casks/phone-use.rb"
+```
 
 ## Release acceptance
 

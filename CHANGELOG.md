@@ -2,6 +2,12 @@
 
 ## 0.9.0 — 2026-08-04
 
+- Reworked the README into a user-facing installation and usage guide with
+  one-time setup, CLI reference, troubleshooting, and bounded agent prompts.
+- Added a README hero built around a real iPhone lock-screen capture showing
+  Apple’s “iPhone in Use” state while the Mac agent controls the device.
+- Added URL-safe signed release artifact names and deterministic Homebrew Cask
+  generation pinned to the exact DMG checksum.
 - Rebranded the repository, macOS app, Swift modules, CLI, dashboard, scripts,
   package metadata, release artifacts, and persisted state namespace to Phone
   Use. Added one-time token and signing-pin migration while retaining the frozen
