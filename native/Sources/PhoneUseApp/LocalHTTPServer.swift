@@ -1,16 +1,12 @@
 import Foundation
 import Network
-import PhoneUseCore
 import PhoneUseProtocol
 
 final class LocalHTTPServer: @unchecked Sendable {
     static let port: UInt16 = {
-        guard let rawValue = ProcessInfo.processInfo.environment["PHONE_USE_PORT"],
-            let value = UInt16(rawValue),
-            value > 0
-        else {
-            return 8_747
-        }
+        guard let raw = ProcessInfo.processInfo.environment["PHONE_USE_PORT"],
+            let value = UInt16(raw), value > 0
+        else { return 8_747 }
         return value
     }()
 
@@ -39,16 +35,16 @@ final class LocalHTTPServer: @unchecked Sendable {
         let parameters = NWParameters.tcp
         parameters.acceptLocalOnly = true
         parameters.requiredLocalEndpoint = .hostPort(
-            host: NWEndpoint.Host("127.0.0.1"),
+            host: "127.0.0.1",
             port: NWEndpoint.Port(rawValue: Self.port)!
         )
         let listener = try NWListener(using: parameters)
         listener.stateUpdateHandler = { [weak self] listenerState in
             switch listenerState {
             case .ready:
-                self?.state.log("Agent bridge listening on 127.0.0.1:\(Self.port)")
+                self?.state.log("Agent API listening on 127.0.0.1:\(Self.port)")
             case .failed(let error):
-                self?.state.log("Agent bridge server failed: \(error)")
+                self?.state.log("Agent API failed: \(error)")
             default:
                 break
             }
@@ -64,24 +60,22 @@ final class LocalHTTPServer: @unchecked Sendable {
         queue.sync {
             listener?.cancel()
             listener = nil
-            for client in clients.values {
+            let activeClients = Array(clients.values)
+            clients.removeAll()
+            for client in activeClients {
                 client.cancel()
             }
-            clients.removeAll()
         }
     }
 
     private func accept(_ connection: NWConnection) {
         let client = HTTPClient(
             connection: connection,
-            state: state,
             requestHandler: { [weak self] request, client in
                 self?.handle(request, from: client)
             },
             closeHandler: { [weak self] id in
-                self?.queue.async {
-                    self?.clients.removeValue(forKey: id)
-                }
+                self?.clients.removeValue(forKey: id)
             }
         )
         clients[client.id] = client
@@ -95,32 +89,9 @@ final class LocalHTTPServer: @unchecked Sendable {
         }
 
         if request.method == "GET", request.path == "/auth/dashboard" {
-            guard let bootstrap = request.query["bootstrap"] else {
-                client.sendJSON(status: 401, value: ErrorResponse(error: "Invalid or expired dashboard link"))
-                return
-            }
-            do {
-                guard let session = try tokenStore.exchangeDashboardBootstrap(bootstrap) else {
-                    client.sendJSON(
-                        status: 401,
-                        value: ErrorResponse(error: "Invalid or expired dashboard link")
-                    )
-                    return
-                }
-                client.redirect(
-                    to: "/",
-                    cookie: "PhoneUseSession=\(session); HttpOnly; SameSite=Strict; "
-                        + "Path=/; Max-Age=\(Int(TokenStore.dashboardSessionLifetime))"
-                )
-            } catch {
-                client.sendJSON(
-                    status: 500,
-                    value: ErrorResponse(error: error.localizedDescription)
-                )
-            }
+            exchangeDashboardBootstrap(request, client: client)
             return
         }
-
         if let origin = request.headers["origin"],
             origin != "http://127.0.0.1:\(Self.port)"
         {
@@ -132,63 +103,54 @@ final class LocalHTTPServer: @unchecked Sendable {
             return
         }
 
-        if request.method == "GET", request.path == "/health" {
-            let snapshot = state.snapshot()
+        switch (request.method, request.path) {
+        case ("GET", "/health"):
+            let status = state.snapshot()
             client.sendJSON(
                 status: 200,
                 value: HealthResponse(
                     ok: true,
-                    version: snapshot.version,
-                    protocolVersion: snapshot.protocolVersion,
-                    transport: snapshot.transport,
-                    phase: snapshot.phase.rawValue,
-                    screenCaptureAuthorized: snapshot.screenCaptureAuthorized,
-                    accessibilityAuthorized: snapshot.accessibilityAuthorized
+                    version: status.version,
+                    protocolVersion: status.protocolVersion,
+                    transport: status.transport,
+                    phase: status.phase,
+                    proof: status.proof,
+                    controlCapabilities: status.controlCapabilities
                 )
             )
-            return
-        }
-
-        switch (request.method, request.path) {
         case ("POST", "/api/dashboard/bootstrap"):
-            do {
-                let bootstrap = try tokenStore.issueDashboardBootstrap()
-                client.sendJSON(
-                    status: 200,
-                    value: DashboardBootstrapResponse(
-                        path: "/auth/dashboard?bootstrap=\(bootstrap)"
-                    )
-                )
-            } catch {
-                client.sendJSON(
-                    status: 500,
-                    value: ErrorResponse(error: error.localizedDescription)
-                )
-            }
+            issueDashboardBootstrap(to: client)
         case ("GET", "/api/status"):
             client.sendJSON(status: 200, value: state.snapshot())
         case ("GET", "/api/observe"):
-            guard let frame = state.latestFrame() else {
-                client.sendJSON(status: 503, value: ErrorResponse(error: "No iPhone frame is available"))
-                return
-            }
-            client.send(
-                status: 200,
-                headers: [
-                    "Content-Type": "image/jpeg",
-                    "X-Frame-ID": String(frame.id),
-                    "X-Frame-Token": frame.token,
-                    "Cache-Control": "no-store"
-                ],
-                body: frame.data
-            )
-        case ("GET", "/stream.mjpeg"):
-            client.beginMJPEG()
-        case ("POST", "/api/session/open"):
             Task { [weak self, weak client] in
                 guard let self, let client else { return }
                 do {
-                    try await coordinator.ensureSession()
+                    let frame = try await coordinator.observe()
+                    client.send(
+                        status: 200,
+                        headers: [
+                            "Content-Type": "image/jpeg",
+                            "X-Frame-ID": String(frame.id),
+                            "X-Frame-Token": frame.frameToken,
+                            "X-Frame-Width": String(frame.width),
+                            "X-Frame-Height": String(frame.height),
+                            "Cache-Control": "no-store"
+                        ],
+                        body: frame.jpeg
+                    )
+                } catch {
+                    client.sendJSON(
+                        status: 503,
+                        value: ErrorResponse(error: error.localizedDescription)
+                    )
+                }
+            }
+        case ("POST", "/api/device/connect"):
+            Task { [weak self, weak client] in
+                guard let self, let client else { return }
+                do {
+                    try await coordinator.connect()
                     client.sendJSON(status: 200, value: state.snapshot())
                 } catch {
                     client.sendJSON(
@@ -197,34 +159,14 @@ final class LocalHTTPServer: @unchecked Sendable {
                     )
                 }
             }
-        case ("POST", "/api/session/close"):
+        case ("POST", "/api/device/disconnect"):
             Task { [weak self, weak client] in
                 guard let self, let client else { return }
-                let closed = await coordinator.closeSession()
-                client.sendJSON(
-                    status: closed ? 200 : 409,
-                    value: SessionCloseResponse(closed: closed)
-                )
+                await coordinator.disconnect()
+                client.sendJSON(status: 200, value: state.snapshot())
             }
-        case ("POST", "/api/act"):
-            do {
-                let command = try JSONDecoder().decode(ControlCommand.self, from: request.body)
-                _ = try command.validated()
-                Task { [weak self, weak client] in
-                    guard let self, let client else { return }
-                    do {
-                        let result = try await coordinator.act(command)
-                        client.sendJSON(status: 200, value: result)
-                    } catch {
-                        client.sendJSON(
-                            status: 409,
-                            value: ErrorResponse(error: error.localizedDescription)
-                        )
-                    }
-                }
-            } catch {
-                client.sendJSON(status: 400, value: ErrorResponse(error: error.localizedDescription))
-            }
+        case ("POST", "/api/actions"):
+            performAction(request, client: client)
         default:
             if request.method == "GET" || request.method == "HEAD" {
                 serveStatic(request, to: client)
@@ -234,25 +176,82 @@ final class LocalHTTPServer: @unchecked Sendable {
         }
     }
 
-    private func authorized(_ request: HTTPRequest) -> Bool {
-        if request.headers["authorization"] == "Bearer \(tokenStore.token)" {
-            return true
+    private func exchangeDashboardBootstrap(_ request: HTTPRequest, client: HTTPClient) {
+        guard let bootstrap = request.query["bootstrap"] else {
+            client.sendJSON(
+                status: 401,
+                value: ErrorResponse(error: "Invalid or expired dashboard link")
+            )
+            return
         }
+        do {
+            guard let session = try tokenStore.exchangeDashboardBootstrap(bootstrap) else {
+                client.sendJSON(
+                    status: 401,
+                    value: ErrorResponse(error: "Invalid or expired dashboard link")
+                )
+                return
+            }
+            client.redirect(
+                to: "/",
+                cookie: "PhoneUseSession=\(session); HttpOnly; SameSite=Strict; "
+                    + "Path=/; Max-Age=\(Int(TokenStore.dashboardSessionLifetime))"
+            )
+        } catch {
+            client.sendJSON(status: 500, value: ErrorResponse(error: error.localizedDescription))
+        }
+    }
+
+    private func issueDashboardBootstrap(to client: HTTPClient) {
+        do {
+            let bootstrap = try tokenStore.issueDashboardBootstrap()
+            client.sendJSON(
+                status: 200,
+                value: DashboardBootstrapResponse(
+                    path: "/auth/dashboard?bootstrap=\(bootstrap)"
+                )
+            )
+        } catch {
+            client.sendJSON(status: 500, value: ErrorResponse(error: error.localizedDescription))
+        }
+    }
+
+    private func performAction(_ request: HTTPRequest, client: HTTPClient) {
+        do {
+            let command = try JSONDecoder().decode(ControlCommand.self, from: request.body)
+            let validated = try command.validated()
+            Task { [weak self, weak client] in
+                guard let self, let client else { return }
+                do {
+                    client.sendJSON(status: 200, value: try await coordinator.perform(validated))
+                } catch {
+                    client.sendJSON(
+                        status: 409,
+                        value: ErrorResponse(error: error.localizedDescription)
+                    )
+                }
+            }
+        } catch {
+            client.sendJSON(status: 400, value: ErrorResponse(error: error.localizedDescription))
+        }
+    }
+
+    private func authorized(_ request: HTTPRequest) -> Bool {
+        if request.headers["authorization"] == "Bearer \(tokenStore.token)" { return true }
         guard let cookie = request.headers["cookie"],
-            let session =
-                cookie
-                .split(separator: ";")
+            let session = cookie.split(separator: ";")
                 .map({ $0.trimmingCharacters(in: .whitespaces) })
                 .first(where: { $0.hasPrefix("PhoneUseSession=") })?
                 .dropFirst("PhoneUseSession=".count)
-        else {
-            return false
-        }
+        else { return false }
         return tokenStore.dashboardSessionIsValid(String(session))
     }
 
     private func serveStatic(_ request: HTTPRequest, to client: HTTPClient) {
-        let requested = request.path == "/" ? "index.html" : String(request.path.drop(while: { $0 == "/" }))
+        let requested =
+            request.path == "/"
+            ? "index.html"
+            : String(request.path.drop(while: { $0 == "/" }))
         guard !requested.contains(".."), !requested.contains("\0") else {
             client.sendJSON(status: 400, value: ErrorResponse(error: "Invalid path"))
             return
@@ -262,21 +261,22 @@ final class LocalHTTPServer: @unchecked Sendable {
             client.sendJSON(status: 404, value: ErrorResponse(error: "Not found"))
             return
         }
-        let mime: String
-        switch fileURL.pathExtension.lowercased() {
-        case "html": mime = "text/html; charset=utf-8"
-        case "css": mime = "text/css; charset=utf-8"
-        case "js": mime = "text/javascript; charset=utf-8"
-        case "svg": mime = "image/svg+xml"
-        default: mime = "application/octet-stream"
-        }
+        let mime =
+            switch fileURL.pathExtension.lowercased() {
+            case "html": "text/html; charset=utf-8"
+            case "css": "text/css; charset=utf-8"
+            case "js": "text/javascript; charset=utf-8"
+            case "svg": "image/svg+xml"
+            default: "application/octet-stream"
+            }
         client.send(
             status: 200,
             headers: [
                 "Content-Type": mime,
                 "Cache-Control": "no-store",
                 "Content-Security-Policy":
-                    "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'",
+                    "default-src 'self'; img-src 'self' blob:; style-src 'self'; "
+                    + "script-src 'self'; connect-src 'self'",
                 "Referrer-Policy": "no-referrer",
                 "X-Content-Type-Options": "nosniff",
                 "X-Frame-Options": "DENY"
@@ -289,37 +289,27 @@ final class LocalHTTPServer: @unchecked Sendable {
 private final class HTTPClient: @unchecked Sendable {
     let id = UUID()
     private let connection: NWConnection
-    private let state: BrokerState
     private let requestHandler: @Sendable (HTTPRequest, HTTPClient) -> Void
     private let closeHandler: @Sendable (UUID) -> Void
     private let lock = NSLock()
     private var buffer = Data()
     private var handled = false
     private var closed = false
-    private var frameObserverID: UUID?
-    private var sendingFrame = false
-    private var pendingFrame: Data?
 
     init(
         connection: NWConnection,
-        state: BrokerState,
         requestHandler: @escaping @Sendable (HTTPRequest, HTTPClient) -> Void,
         closeHandler: @escaping @Sendable (UUID) -> Void
     ) {
         self.connection = connection
-        self.state = state
         self.requestHandler = requestHandler
         self.closeHandler = closeHandler
     }
 
     func start(on queue: DispatchQueue) {
-        connection.stateUpdateHandler = { [weak self] connectionState in
-            switch connectionState {
-            case .failed, .cancelled:
-                self?.finish()
-            default:
-                break
-            }
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .failed = state { self?.finish() }
+            if case .cancelled = state { self?.finish() }
         }
         connection.start(queue: queue)
         receive()
@@ -332,14 +322,13 @@ private final class HTTPClient: @unchecked Sendable {
 
     func sendJSON<T: Encodable>(status: Int, value: T) {
         do {
-            let data = try JSONEncoder().encode(value)
             send(
                 status: status,
                 headers: [
                     "Content-Type": "application/json; charset=utf-8",
                     "Cache-Control": "no-store"
                 ],
-                body: data
+                body: try JSONEncoder().encode(value)
             )
         } catch {
             send(
@@ -382,120 +371,47 @@ private final class HTTPClient: @unchecked Sendable {
             })
     }
 
-    func beginMJPEG() {
-        let header = """
-            HTTP/1.1 200 OK\r
-            Content-Type: multipart/x-mixed-replace; boundary=frame\r
-            Cache-Control: no-store\r
-            Connection: keep-alive\r
-            \r
-
-            """
-        connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
-        frameObserverID = state.observeFrames { [weak self] frame, _ in
-            self?.enqueueFrame(frame)
-        }
-    }
-
     private func receive() {
-        connection.receive(
-            minimumIncompleteLength: 1,
-            maximumLength: 64 * 1_024
-        ) { [weak self] data, _, complete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1_024) {
+            [weak self] data, _, complete, error in
             guard let self else { return }
-            if let data {
-                buffer.append(data)
-            }
+            if let data { buffer.append(data) }
             if buffer.count > 1_048_576 {
                 sendJSON(status: 413, value: ErrorResponse(error: "Request too large"))
-                return
-            }
-            if !handled, let request = HTTPRequest.parse(buffer) {
+            } else if !handled, let request = HTTPRequest.parse(buffer) {
                 handled = true
                 requestHandler(request, self)
-                return
-            }
-            if complete || error != nil {
+            } else if complete || error != nil {
                 finish()
-                return
+            } else {
+                receive()
             }
-            receive()
         }
-    }
-
-    private func enqueueFrame(_ frame: Data) {
-        lock.lock()
-        guard !closed else {
-            lock.unlock()
-            return
-        }
-        if sendingFrame {
-            pendingFrame = frame
-            lock.unlock()
-            return
-        }
-        sendingFrame = true
-        lock.unlock()
-        sendFrame(frame)
-    }
-
-    private func sendFrame(_ frame: Data) {
-        var packet = Data(
-            "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(frame.count)\r\n\r\n".utf8
-        )
-        packet.append(frame)
-        packet.append(Data("\r\n".utf8))
-        connection.send(
-            content: packet,
-            completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
-                if error != nil {
-                    finish()
-                    return
-                }
-                lock.lock()
-                let next = pendingFrame
-                pendingFrame = nil
-                if next == nil {
-                    sendingFrame = false
-                }
-                lock.unlock()
-                if let next {
-                    sendFrame(next)
-                }
-            })
     }
 
     private func finish() {
-        lock.lock()
-        guard !closed else {
-            lock.unlock()
-            return
+        let shouldClose = lock.withLock {
+            guard !closed else { return false }
+            closed = true
+            return true
         }
-        closed = true
-        let observerID = frameObserverID
-        frameObserverID = nil
-        lock.unlock()
-        if let observerID {
-            state.removeFrameObserver(observerID)
-        }
-        closeHandler(id)
+        if shouldClose { closeHandler(id) }
     }
 
     private static func reason(for status: Int) -> String {
         switch status {
-        case 200: return "OK"
-        case 303: return "See Other"
-        case 400: return "Bad Request"
-        case 401: return "Unauthorized"
-        case 403: return "Forbidden"
-        case 404: return "Not Found"
-        case 405: return "Method Not Allowed"
-        case 409: return "Conflict"
-        case 413: return "Content Too Large"
-        case 500: return "Internal Server Error"
-        case 503: return "Service Unavailable"
-        default: return "Response"
+        case 200: "OK"
+        case 303: "See Other"
+        case 400: "Bad Request"
+        case 401: "Unauthorized"
+        case 403: "Forbidden"
+        case 404: "Not Found"
+        case 405: "Method Not Allowed"
+        case 409: "Conflict"
+        case 413: "Content Too Large"
+        case 500: "Internal Server Error"
+        case 503: "Service Unavailable"
+        default: "Response"
         }
     }
 }
@@ -508,15 +424,9 @@ private struct HTTPRequest: Sendable {
     let body: Data
 
     static func parse(_ data: Data) -> HTTPRequest? {
-        let separator = Data("\r\n\r\n".utf8)
-        guard let headerRange = data.range(of: separator),
-            let headerText = String(
-                data: data[..<headerRange.lowerBound],
-                encoding: .utf8
-            )
-        else {
-            return nil
-        }
+        guard let headerRange = data.range(of: Data("\r\n\r\n".utf8)),
+            let headerText = String(data: data[..<headerRange.lowerBound], encoding: .utf8)
+        else { return nil }
         let lines = headerText.components(separatedBy: "\r\n")
         guard let requestLine = lines.first else { return nil }
         let parts = requestLine.split(separator: " ", maxSplits: 2).map(String.init)
@@ -525,25 +435,19 @@ private struct HTTPRequest: Sendable {
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             guard let delimiter = line.firstIndex(of: ":") else { continue }
-            let name = line[..<delimiter].lowercased()
-            let value = line[line.index(after: delimiter)...]
+            headers[line[..<delimiter].lowercased()] = line[line.index(after: delimiter)...]
                 .trimmingCharacters(in: .whitespaces)
-            headers[name] = value
         }
         guard let contentLength = Int(headers["content-length"] ?? "0"),
-            (0...1_048_576).contains(contentLength)
-        else {
-            return nil
-        }
-        let bodyStart = headerRange.upperBound
-        guard data.count >= bodyStart + contentLength else { return nil }
-        let body = Data(data[bodyStart..<bodyStart + contentLength])
-
+            (0...1_048_576).contains(contentLength),
+            data.count >= headerRange.upperBound + contentLength
+        else { return nil }
+        let body = Data(data[headerRange.upperBound..<headerRange.upperBound + contentLength])
         guard let components = URLComponents(string: parts[1]) else { return nil }
-        var query: [String: String] = [:]
-        for item in components.queryItems ?? [] {
+        let query = (components.queryItems ?? []).reduce(into: [String: String]()) {
+            values, item in
             if let value = item.value {
-                query[item.name] = value
+                values[item.name] = value
             }
         }
         return HTTPRequest(
@@ -556,24 +460,16 @@ private struct HTTPRequest: Sendable {
     }
 }
 
-private struct ErrorResponse: Codable {
-    let error: String
-}
+private struct ErrorResponse: Codable { let error: String }
 
 private struct HealthResponse: Codable {
     let ok: Bool
     let version: String
     let protocolVersion: Int
     let transport: String
-    let phase: String
-    let screenCaptureAuthorized: Bool
-    let accessibilityAuthorized: Bool
+    let phase: DeviceHubPhase
+    let proof: DeviceHubProofState
+    let controlCapabilities: ControlCapabilities
 }
 
-private struct SessionCloseResponse: Codable {
-    let closed: Bool
-}
-
-private struct DashboardBootstrapResponse: Codable {
-    let path: String
-}
+private struct DashboardBootstrapResponse: Codable { let path: String }

@@ -1,87 +1,51 @@
 import Foundation
-import PhoneUseCore
 import XCTest
 
 @testable import PhoneUseApp
+@testable import PhoneUseProtocol
 
 final class BrokerStateTests: XCTestCase {
-    func testPublishesThePhoneUseProductIdentifier() {
-        XCTAssertEqual(BrokerState().snapshot().product, "phone-use")
+    func testInitialStatusIsTruthfulAndCapabilityFree() {
+        let status = BrokerState().snapshot()
+        XCTAssertEqual(status.phase, .unavailable)
+        XCTAssertEqual(status.proof, .unimplemented)
+        XCTAssertEqual(status.controlCapabilities, .none)
+        XCTAssertNil(status.frame)
     }
 
-    func testDropsFramesUntilStableSessionAndRequiresANewFrame() {
-        let state = readyState()
-        state.updateSession(.confirming)
-
-        state.frame(Data("pre-session".utf8))
-        XCTAssertEqual(state.frameMarker().id, 0)
-        XCTAssertNil(state.latestFrame())
-
-        state.updateSession(.connected)
-        XCTAssertEqual(state.snapshot().phase, .reconnecting)
-        XCTAssertNil(state.latestFrame())
-
-        let connectedFrame = Data("connected".utf8)
-        state.frame(connectedFrame)
-        XCTAssertEqual(state.snapshot().phase, .streaming)
-        XCTAssertEqual(state.frameMarker().id, 1)
-        XCTAssertEqual(state.latestFrame()?.data, connectedFrame)
-    }
-
-    func testLeavingConnectedStateAtomicallyClearsPublishedFrame() {
-        let state = readyState()
-        state.updateSession(.connected)
-        state.frame(Data("connected".utf8))
-        XCTAssertNotNil(state.latestFrame())
-
-        state.updateSession(.waitingForPhone)
-
-        XCTAssertEqual(state.snapshot().phase, .waiting)
-        XCTAssertEqual(state.snapshot().fps, 0)
-        XCTAssertNil(state.latestFrame())
-        XCTAssertEqual(state.frameMarker().token, "")
-    }
-
-    func testCaptureFailureCannotReopenPreviousFrame() {
-        let state = readyState()
-        state.updateSession(.connected)
-        state.frame(Data("first".utf8))
-        XCTAssertNotNil(state.latestFrame())
-
-        state.status(
-            CaptureStatus(
-                phase: .reconnecting,
-                message: "Capture paused",
-                width: 354,
-                height: 781
-            )
-        )
-        state.status(streamingCaptureStatus())
-
-        XCTAssertEqual(state.snapshot().phase, .reconnecting)
-        XCTAssertNil(state.latestFrame())
-        state.frame(Data("second".utf8))
-        XCTAssertEqual(state.snapshot().phase, .streaming)
-    }
-
-    private func readyState() -> BrokerState {
+    func testStatusObserversReceiveRuntimeAndLogs() {
         let state = BrokerState()
-        state.updatePermissions(
-            BrokerPermissions(
-                screenCaptureAuthorized: true,
-                accessibilityAuthorized: true
+        let recorder = SnapshotRecorder()
+        let observer = state.observeStatus { recorder.append($0) }
+
+        state.update(
+            DeviceHubRuntimeStatus(
+                phase: .stopped,
+                proof: .unimplemented,
+                message: "Stopped for test",
+                controlCapabilities: .none,
+                frame: nil
             )
         )
-        state.status(streamingCaptureStatus())
-        return state
+        state.log("test event")
+        state.removeStatusObserver(observer)
+
+        let snapshots = recorder.values
+        XCTAssertEqual(snapshots.count, 3)
+        XCTAssertEqual(snapshots[1].phase, .stopped)
+        XCTAssertEqual(snapshots.last?.logs, ["test event"])
+    }
+}
+
+private final class SnapshotRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshots: [PhoneUseStatus] = []
+
+    var values: [PhoneUseStatus] {
+        lock.withLock { snapshots }
     }
 
-    private func streamingCaptureStatus() -> CaptureStatus {
-        CaptureStatus(
-            phase: .streaming,
-            message: "Frames available",
-            width: 354,
-            height: 781
-        )
+    func append(_ snapshot: PhoneUseStatus) {
+        lock.withLock { snapshots.append(snapshot) }
     }
 }

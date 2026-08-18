@@ -51,8 +51,7 @@ test("the release artifact renders a checksum-pinned local Cask", async (t) => {
   assert.match(cask, /app "Phone Use\.app"/);
   assert.match(cask, /Contents\/Helpers\/phone-use/);
   assert.match(cask, /depends_on macos: :sequoia/);
-  assert.match(cask, /uninstall quit: "com\.adamzvada\.mirrorrelay"/);
-  assert.doesNotMatch(cask, /name "Mirror Relay"/);
+  assert.match(cask, /uninstall quit: "com\.adamzvada\.phoneuse"/);
   assert.equal((await stat(output)).mode & 0o777, 0o644);
 });
 

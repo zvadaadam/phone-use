@@ -41,10 +41,11 @@ ACTUAL_BUNDLE_ID=$(/usr/libexec/PlistBuddy \
 
 file "${MAIN_EXECUTABLE}" | grep -q "Mach-O" || fail "main executable is not Mach-O"
 file "${HELPER_EXECUTABLE}" | grep -q "Mach-O" || fail "CLI helper is not Mach-O"
-otool -L "${MAIN_EXECUTABLE}" | grep -q "ScreenCaptureKit" \
-  || fail "main executable does not link ScreenCaptureKit"
-if otool -L "${HELPER_EXECUTABLE}" | grep -Eq "ScreenCaptureKit|ApplicationServices"; then
-  fail "CLI helper unexpectedly links capture or input frameworks"
+if otool -L "${MAIN_EXECUTABLE}" | grep -q "/PrivateFrameworks/"; then
+  fail "main executable unexpectedly links an Apple private framework"
+fi
+if otool -L "${HELPER_EXECUTABLE}" | grep -q "/PrivateFrameworks/"; then
+  fail "CLI helper unexpectedly links an Apple private framework"
 fi
 
 while IFS= read -r -d '' resource; do
@@ -61,20 +62,6 @@ HELPER_SIGNATURE=$(codesign -dv --verbose=4 "${HELPER_EXECUTABLE}" 2>&1)
 [[ "${HELPER_SIGNATURE}" == *"runtime"* ]] || fail "CLI helper is missing hardened runtime"
 
 if [[ "${REQUIRE_STABLE_SIGNING}" == "1" ]]; then
-  if [[ "${APP_SIGNATURE}" == *"Authority=Apple Development:"* \
-      || "${APP_SIGNATURE}" == *"Authority=Developer ID Application:"* ]]; then
-    if [[ "${HELPER_SIGNATURE}" != *"Authority=Apple Development:"* \
-        && "${HELPER_SIGNATURE}" != *"Authority=Developer ID Application:"* ]]; then
-      fail "app and CLI helper do not use the same Apple-backed signing channel"
-    fi
-  elif [[ "${APP_SIGNATURE}" == *"Authority=${PHONE_USE_LOCAL_SIGN_IDENTITY}"* \
-      && "${HELPER_SIGNATURE}" == *"Authority=${PHONE_USE_LOCAL_SIGN_IDENTITY}"* \
-      || "${APP_SIGNATURE}" == *"Authority=${PHONE_USE_LEGACY_LOCAL_SIGN_IDENTITY}"* \
-      && "${HELPER_SIGNATURE}" == *"Authority=${PHONE_USE_LEGACY_LOCAL_SIGN_IDENTITY}"* ]]; then
-    :
-  else
-    fail "app is not signed with a supported stable development identity"
-  fi
   APP_LEAF_HASH="$(phone_use_signature_leaf_hash "${APP_DIR}")"
   HELPER_LEAF_HASH="$(phone_use_signature_leaf_hash "${HELPER_EXECUTABLE}")"
   APP_LEAF_HASH="${APP_LEAF_HASH:u}"
@@ -114,4 +101,4 @@ if [[ -n "${PHONE_USE_EXPECTED_ARCHS:-}" ]]; then
   done
 fi
 
-print "PASS: Phone Use ${ACTUAL_VERSION} package layout, protocol helper, and signatures"
+print "PASS: Phone Use ${ACTUAL_VERSION} Device Hub-only package, helper, and signatures"

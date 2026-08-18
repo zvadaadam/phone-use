@@ -1,9 +1,9 @@
 {
   "name": "@zvadaadam/phone-use",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
-  "description": "Local authenticated bridge for observing and controlling a locked iPhone through Apple iPhone Mirroring.",
+  "description": "Local agent API for direct iOS 27 physical-device control through Apple Device Hub.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zvadaadam/phone-use.git"
@@ -27,8 +27,6 @@
     "test:native": "swift test --package-path native",
     "test:integration": "zsh scripts/integration-test.sh",
     "test:smoke": "zsh scripts/smoke-test.sh",
-    "test:device": "zsh scripts/device-test.sh",
-    "test:focus": "zsh scripts/focus-test.sh",
     "check": "npm test && swift build -c release --package-path native -Xswiftc -warnings-as-errors && npm run package:app"
   },
   "engines": {

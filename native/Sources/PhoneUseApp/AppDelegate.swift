@@ -1,11 +1,9 @@
 import AppKit
-import ApplicationServices
-import CoreGraphics
 import Foundation
-import PhoneUseCore
 import PhoneUseProtocol
 import ServiceManagement
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let productName = PhoneUseProtocolMetadata.displayName
 
@@ -16,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusObserverID: UUID?
     private var statusItem: NSStatusItem!
     private var statusLine: NSMenuItem!
-    private var permissionsLine: NSMenuItem!
+    private var runtimeLine: NSMenuItem!
     private var loginItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -33,18 +31,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             installMenu()
             enableLaunchAtLoginForInstalledApp()
-            requestMissingPermissions()
-            coordinator.start()
             try server.start()
+            let coordinator = coordinator!
+            Task { await coordinator.start() }
             statusObserverID = state.observeStatus { [weak self] snapshot in
-                DispatchQueue.main.async {
-                    self?.updateMenu(snapshot)
-                }
+                Task { @MainActor [weak self] in self?.updateMenu(snapshot) }
             }
         } catch {
-            if let data = "[\(Self.productName)] Startup failed: \(error)\n".data(using: .utf8) {
-                FileHandle.standardError.write(data)
-            }
+            FileHandle.standardError.write(
+                Data("[\(Self.productName)] Startup failed: \(error)\n".utf8)
+            )
             let alert = NSAlert()
             alert.messageText = "\(Self.productName) could not start"
             alert.informativeText = error.localizedDescription
@@ -54,71 +50,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let statusObserverID {
-            state.removeStatusObserver(statusObserverID)
-        }
+        if let statusObserverID { state.removeStatusObserver(statusObserverID) }
         server?.stop()
-        coordinator?.stop()
+        if let coordinator { Task { await coordinator.stop() } }
     }
 
     @objc private func openDashboard() {
-        guard let bootstrap = try? tokenStore.issueDashboardBootstrap() else {
-            state.log("Could not create a secure dashboard session")
-            return
-        }
-        guard
+        guard let bootstrap = try? tokenStore.issueDashboardBootstrap(),
             let url = URL(
                 string: "http://127.0.0.1:\(LocalHTTPServer.port)"
                     + "/auth/dashboard?bootstrap=\(bootstrap)"
             )
         else {
+            state.log("Could not create a secure dashboard session")
             return
         }
         NSWorkspace.shared.open(url)
     }
 
-    @objc private func openSession() {
-        statusLine.title = "Opening iPhone…"
+    @objc private func connectDevice() {
         Task { [weak self] in
             do {
-                try await self?.coordinator.ensureSession()
+                try await self?.coordinator.connect()
             } catch {
-                self?.state.log("Could not open iPhone session: \(error.localizedDescription)")
+                self?.state.log("Could not connect Device Hub: \(error.localizedDescription)")
             }
         }
     }
 
-    @objc private func closeSession() {
-        Task { [weak self] in
-            guard let self else { return }
-            if !(await coordinator.closeSession()) {
-                state.log("The iPhone automation session did not close cleanly")
-            }
-        }
-    }
-
-    @objc private func requestPermissions() {
-        if !CGPreflightScreenCaptureAccess() {
-            _ = CGRequestScreenCaptureAccess()
-        }
-        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-        state.updatePermissions(
-            BrokerPermissions(
-                screenCaptureAuthorized: CGPreflightScreenCaptureAccess(),
-                accessibilityAuthorized: AXIsProcessTrusted()
-            )
-        )
-    }
-
-    private func requestMissingPermissions() {
-        if !CGPreflightScreenCaptureAccess() {
-            _ = CGRequestScreenCaptureAccess()
-        }
-        if !AXIsProcessTrusted() {
-            let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-            _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-        }
+    @objc private func disconnectDevice() {
+        Task { [weak self] in await self?.coordinator.disconnect() }
     }
 
     @objc private func toggleLoginItem() {
@@ -154,9 +115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusLine = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
         statusLine.isEnabled = false
         menu.addItem(statusLine)
-        permissionsLine = NSMenuItem(title: "Permissions: checking", action: nil, keyEquivalent: "")
-        permissionsLine.isEnabled = false
-        menu.addItem(permissionsLine)
+        runtimeLine = NSMenuItem(title: "iOS 27 Device Hub", action: nil, keyEquivalent: "")
+        runtimeLine.isEnabled = false
+        menu.addItem(runtimeLine)
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Open Dashboard",
@@ -164,21 +125,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "o"
         ).target = self
         menu.addItem(
-            withTitle: "Open iPhone Session",
-            action: #selector(openSession),
+            withTitle: "Connect Device",
+            action: #selector(connectDevice),
             keyEquivalent: ""
         ).target = self
         menu.addItem(
-            withTitle: "Close iPhone Session",
-            action: #selector(closeSession),
+            withTitle: "Disconnect Device",
+            action: #selector(disconnectDevice),
             keyEquivalent: ""
         ).target = self
         menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Grant Mirroring Permissions…",
-            action: #selector(requestPermissions),
-            keyEquivalent: ""
-        ).target = self
         loginItem = menu.addItem(
             withTitle: "Launch at Login",
             action: #selector(toggleLoginItem),
@@ -196,13 +152,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    private func updateMenu(_ snapshot: BrokerSnapshot) {
-        statusLine.title = "\(friendlyPhase(snapshot.phase)) · \(snapshot.fps) fps"
-        permissionsLine.title = [
-            snapshot.screenCaptureAuthorized ? "Screen ✓" : "Screen ✕",
-            snapshot.accessibilityAuthorized ? "Control ✓" : "Control ✕"
-        ].joined(separator: " · ")
-        statusItem.button?.toolTip = "\(Self.productName) — \(snapshot.message)"
+    private func updateMenu(_ status: PhoneUseStatus) {
+        statusLine.title = friendlyPhase(status.phase)
+        runtimeLine.title = "iOS \(status.requirements.minimumIOSVersion)+ · \(status.proof.rawValue)"
+        statusItem.button?.toolTip = "\(Self.productName) — \(status.message)"
     }
 
     private func updateLoginItem() {
@@ -210,10 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func enableLaunchAtLoginForInstalledApp() {
-        guard Bundle.main.bundleURL.path.hasPrefix("/Applications/") else {
-            return
-        }
-
+        guard Bundle.main.bundleURL.path.hasPrefix("/Applications/") else { return }
         switch SMAppService.mainApp.status {
         case .enabled:
             state.log("Launch at Login enabled")
@@ -223,9 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 try SMAppService.mainApp.register()
                 updateLoginItem()
-                state.log(
-                    "Launch at Login \(SMAppService.mainApp.status == .enabled ? "enabled" : "registered")"
-                )
+                state.log("Launch at Login registered")
             } catch {
                 state.log("Could not enable Launch at Login: \(error.localizedDescription)")
             }
@@ -234,13 +182,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func friendlyPhase(_ phase: BrokerPhase) -> String {
+    private func friendlyPhase(_ phase: DeviceHubPhase) -> String {
         switch phase {
-        case .streaming: return "Connected"
-        case .permission: return "Needs permission"
-        case .waiting: return "Waiting for iPhone"
-        case .reconnecting: return "Reconnecting"
-        case .starting: return "Starting"
+        case .unavailable: "Device Hub unavailable"
+        case .waitingForDevice: "Waiting for iPhone"
+        case .connecting: "Connecting"
+        case .streaming: "Connected"
+        case .stopped: "Stopped"
         }
     }
 

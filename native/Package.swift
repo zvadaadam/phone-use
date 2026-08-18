@@ -16,14 +16,9 @@ let package = Package(
             name: "PhoneUseProtocol",
             path: "Sources/PhoneUseProtocol"
         ),
-        .target(
-            name: "PhoneUseCore",
-            dependencies: ["PhoneUseProtocol"],
-            path: "Sources/PhoneUseCore"
-        ),
         .executableTarget(
             name: "PhoneUseApp",
-            dependencies: ["PhoneUseCore", "PhoneUseProtocol"],
+            dependencies: ["PhoneUseProtocol"],
             path: "Sources/PhoneUseApp"
         ),
         .executableTarget(
@@ -32,20 +27,15 @@ let package = Package(
             path: "Sources/PhoneUseCLI"
         ),
         .testTarget(
-            name: "PhoneUseCoreTests",
-            dependencies: ["PhoneUseCore", "PhoneUseProtocol"],
-            path: "Tests/PhoneUseCoreTests"
-        ),
-        .testTarget(
             name: "PhoneUseProtocolTests",
             dependencies: ["PhoneUseProtocol"],
             path: "Tests/PhoneUseProtocolTests"
         ),
         .testTarget(
             name: "PhoneUseAppTests",
-            dependencies: ["PhoneUseApp", "PhoneUseCore"],
+            dependencies: ["PhoneUseApp", "PhoneUseProtocol"],
             path: "Tests/PhoneUseAppTests"
         )
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

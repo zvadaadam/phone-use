@@ -1,30 +1,34 @@
 # Security
 
-## Supported version
+## Trust boundary
 
-Security fixes are applied to the latest release only.
+Phone Use is a single-user local agent bridge. The macOS account, signed app,
+local API token, and paired physical device are trusted. Web pages, other local
+processes, remote networks, and agent-generated action payloads are untrusted.
 
-## Boundary
+## Current protections
 
-Phone Use is intentionally local:
+- IPv4 loopback-only listener;
+- exact Host and Origin validation;
+- bearer token in a mode-0600 user-owned file;
+- no query-string authentication;
+- one-time dashboard bootstraps;
+- HttpOnly, SameSite=Strict browser sessions;
+- one-megabyte request limit;
+- normalized coordinate, text-size, shortcut, and frame-token validation;
+- zero control capabilities until physical proof exists;
+- no GUI-event transport or fallback;
+- packaged binaries signed together and checked for retired framework links.
 
-- the API listens only on `127.0.0.1`;
-- requests with any other HTTP `Host` are rejected to prevent DNS rebinding;
-- every route, including liveness and static assets, requires local
-  authentication or a one-time bootstrap credential;
-- no cloud, LAN, USB test server, or remote tunnel is included;
-- the app does not bypass Apple security or handle passcodes.
+## Action boundary
 
-Anyone who controls the same macOS account can potentially invoke the installed
-CLI and operate the paired phone. Lock the Mac when it is unattended and do not
-proxy port 8747.
-
-The Screen Recording and Accessibility grants belong only to the signed app.
-The embedded CLI is a protocol client, does not link ScreenCaptureKit, and
-rejects incompatible or stale broker versions before issuing commands.
+Every future action must consume a fresh, one-shot token bound to the exact
+observed device frame. A backend may report success only when device input was
+delivered, a later device frame verifies the result, and Mac focus did not
+change. Any ambiguity fails closed.
 
 ## Reporting
 
-Do not include phone screenshots, tokens, credentials, or private message
-content in a report. Provide the Phone Use version, macOS version, a minimal
-reproduction, and sanitized logs to the project owner through a private channel.
+Do not include local tokens, pairing records, device identifiers, screenshots,
+typed text, signing keys, or notarization credentials in an issue. Report
+security problems privately to the repository owner.

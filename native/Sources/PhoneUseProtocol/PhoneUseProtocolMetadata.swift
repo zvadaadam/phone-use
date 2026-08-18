@@ -5,13 +5,8 @@ public enum PhoneUseProtocolMetadata {
     public static let commandName = "phone-use"
     public static let productIdentifier = "phone-use"
     public static let applicationSupportDirectoryName = "Phone Use"
-    public static let legacyApplicationSupportDirectoryName = "Mirror Relay"
-    public static let legacyTokenMigrationMarkerName = "legacy-token-migration-complete"
-    public static let currentVersion = 1
-
-    // Frozen so the rebrand preserves the designated requirement behind existing
-    // Screen Recording and Accessibility grants.
-    public static let appBundleIdentifier = "com.adamzvada.mirrorrelay"
+    public static let currentVersion = 4
+    public static let appBundleIdentifier = "com.adamzvada.phoneuse"
 
     public static func enclosingApplication(for executableURL: URL) -> URL? {
         var candidate = executableURL.resolvingSymlinksInPath().standardizedFileURL
@@ -48,22 +43,9 @@ public enum PhoneUseProtocolMetadata {
         return version
     }
 
-    public static func tokenFileCandidates(
-        in applicationSupportURL: URL,
-        legacyMigrationCompleted: Bool
-    ) -> [URL] {
-        let current = applicationSupportURL
+    public static func tokenFile(in applicationSupportURL: URL) -> URL {
+        applicationSupportURL
             .appendingPathComponent(applicationSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("token", isDirectory: false)
-        guard !legacyMigrationCompleted else { return [current] }
-        return [
-            current,
-            applicationSupportURL
-                .appendingPathComponent(
-                    legacyApplicationSupportDirectoryName,
-                    isDirectory: true
-                )
-                .appendingPathComponent("token", isDirectory: false)
-        ]
     }
 }

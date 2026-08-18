@@ -1,160 +1,105 @@
-# iPhone Mirroring Automation Repository Review
+# Architecture history and evidence
 
-Review updated: 2026-08-04.
+This is the one historical document for approaches removed from Phone Use.
+Raw probes and results remain under .autoresearch/locked-iphone-control so the
+same dead ends do not need to be rediscovered.
 
-## Recommendation
+## Product requirement
 
-Use [`leeguooooo/iphone-use`](https://github.com/leeguooooo/iphone-use) as the
-primary high-performance capture reference and
-[`jfarcand/mirroir-mcp`](https://github.com/jfarcand/mirroir-mcp) as the
-pixel-control and agent-tool reference. Keep Phone Use's smaller
-authenticated loopback API and dashboard.
+An agent should observe and control a locked physical iPhone from a Mac without
+changing the Mac foreground application. The eventual system should also work
+across the Internet, but remote transport is a separate layer from the local
+Mac-to-iPhone link.
 
-## `leeguooooo/iphone-use`
+## What we tried
 
-Best capture-performance evidence.
+### Apple iPhone Mirroring as a GUI transport
 
-- Correctly initializes AppKit before querying WindowServer shareable content.
-- Uses a desktop-independent single-window ScreenCaptureKit stream for the
-  iPhone Mirroring window.
-- Receives BGRA frames at roughly 30 fps, then uses VideoToolbox H.264 and
-  WebRTC for browser transport.
-- Uses global HID events for control after directly-created targeted CGEvents
-  proved insufficient in that implementation.
-- Explicitly documents that HID taps require Mirroring frontmost and that its
-  daemon reasserts focus when another app takes it. That behavior violates
-  Phone Use's never-change-focus invariant.
-- Offers WebDriverAgent as a cursor-free alternative, but that is a separate
-  on-device XCTest transport requiring Developer Mode, signing, and an unlocked
-  setup flow; it is not the locked Continuity route this project targets.
-- Includes a single-controller lease and a broader LAN/WebRTC product surface.
+The first implementation attached to Apple iPhone Mirroring, selected its
+window, captured that window with ScreenCaptureKit, and exposed JPEG frames over
+the local API. This proved that a hidden or background Mirroring window could
+sometimes be observed.
 
-Phone Use adopts the public ScreenCaptureKit window stream, but not WebRTC
-or LAN access. In-memory JPEG over the existing authenticated loopback MJPEG
-route is substantially smaller, preserves the security model, and measured
-12–14 end-to-end fps on this Mac. H.264/WebRTC remains a later option if remote
-network transport or 30–60 fps human interaction becomes a product goal.
+Control was the blocker. Public macOS event delivery was insufficient, and
+process/window-targeted SkyLight experiments could report event delivery while
+still activating iPhone Mirroring. Because any transient focus change violates
+the product requirement, the route remained disabled.
 
-## `jfarcand/mirroir-mcp`
+macOS Screen Recording and Accessibility consent also belonged to the signed
+host app, not the web page or CLI. Rebuild identity and permission persistence
+made the approach operationally brittle.
 
-Best agent-tool and control reference.
+### WebDriverAgent and XCUITest
 
-- Native Swift MCP server with an actively maintained release history.
-- Locates and classifies Apple's Mirroring window with AX and WindowServer data.
-- Captures through `screencapture -l`, with `screencapture -R` as a fallback.
-- Uses global HID-level `CGEvent` input because its directly-created
-  `postToPid` events did not register taps in iPhone Mirroring.
-- Implements trackpad-like phased scrolling for iOS swipes.
-- Adds Apple Vision OCR and optional model-based perception.
-- Exposes a broad MCP tool surface with fail-closed, read-only permissions by
-  default and no network listener.
-- Documents direct Codex MCP installation.
+This route offered semantic automation for development devices, but required a
+signed runner, an active test session, developer provisioning, and behavior that
+did not match the desired locked everyday-phone experience. It was removed as a
+product fallback.
 
-Local verification:
+### pymobiledevice3 and CoreDevice probes
 
-- the official 0.35.1 arm64 release checksum verified and its MCP handshake,
-  status, doctor, and permission model ran successfully;
-- `doctor --json` confirmed this Mac's iPhone Mirroring process plus Screen
-  Recording and Accessibility permissions;
-- live screenshot could not be proven during the review because the native app
-  reported the iPhone session as paused/not found;
-- a source release build failed at link time when its optional `embacle` FFI
-  library was absent, so the release binary was more reliable than a clean
-  source build on this machine.
+pymobiledevice3 was useful as research into pairing, Remote Service Discovery,
+developer services, and device tunnels. It did not by itself provide the
+complete locked-device screen-plus-HID product contract. Its GPL code is not
+copied into Phone Use.
 
-Phone Use adopts its window-classification, global HID, physical-key, and
-phased-scroll lessons, not its process-per-frame capture path or full 33-tool
-MCP surface. Real-device testing disproved Phone Use's earlier background-input
-experiment: AppKit `NSEvent` envelopes with WindowServer metadata and
-`postToPid` can report successful posting but do not control the phone. The
-working route is global HID with Mirroring frontmost. Phone Use therefore
-rejects background control instead of activating the Apple app.
-The upstream FAQ reaches the same conclusion: macOS does not expose an API for
-directing these events to the background Mirroring surface; its suggested
-mitigations still acquire focus and therefore do not meet this project's bar.
-The local HTTP API remains easier for the browser dashboard and for agents that
-are not MCP clients.
+Direct CoreDevice probes discovered Apple-private services and confirmed that
+tooling availability, device OS support, and authenticated service setup are
+separate gates. Several service endpoints accepted connections but did not
+produce a validated frame-plus-control loop on the available phone.
 
-## `Pauli1Go/iphone-mirroring-eu-enabler`
+### Device Hub experiments
 
-Not an automation transport.
+The most promising architecture is Apple Device Hub on iOS 27: device-level
+frames and HID without using a Mac application window. The available test phone
+did not run the required OS, so the experiment could not complete the decisive
+physical test. No production implementation is claimed.
 
-The project changes
-`/private/var/db/os_eligibility/eligibility.plist`, specifically the Iron
-eligibility domain, under elevated privileges and then opens iPhone Mirroring.
-It provides no screenshot stream, input API, lifecycle broker, or agent
-interface.
+## What version 0.10 removed
 
-Risks:
+- the Mirroring process and window detector;
+- ScreenCaptureKit and screenshot capture;
+- Accessibility session inspection;
+- Mac pointer and keyboard event synthesis;
+- private SkyLight event routing;
+- focus monitors that tried to detect damage after GUI input;
+- WebDriverAgent/XCUITest fallback code;
+- old session, capture, permission, and delivery fields;
+- device and focus scripts tied to the discarded runtime;
+- tests that only proved behavior of those deleted abstractions.
 
-- mutates a protected system eligibility database;
-- requires Full Disk Access and administrator privileges;
-- can be invalidated by macOS updates;
-- broad eligibility edits are unrelated to agent control.
+The entire PhoneUseCore target disappeared because it existed to support that
+graph. This was a deletion, not a compatibility wrapper.
 
-Phone Use does not run or embed it. If the native app already opens and
-connects, there is no reason to touch the eligibility database.
+## What remains
 
-## `Dennisjoch/iPhoneMirroring`
+- a signed Swift menu app;
+- a restricted token and one-time browser-session exchange;
+- an authenticated 127.0.0.1 HTTP API;
+- a Swift CLI that launches the app without activation;
+- typed commands with normalized coordinates and one-shot frame tokens;
+- explicit requirements, proof state, and capabilities;
+- packaging and signature verification;
+- the never-change-Mac-focus invariant;
+- raw experimental evidence in .autoresearch.
 
-Useful USB fallback reference, not a match for the locked wireless goal.
+The app bundle identifier changed to com.adamzvada.phoneuse because the new
+runtime no longer needs old privacy grants.
 
-It combines:
+## Current decision
 
-- `pymobiledevice3` DVT screenshot capture over USB/tunnel;
-- WebDriverAgent for control;
-- Developer Mode, pairing, tunneld/root setup, and Xcode signing.
+Phone Use has one production architecture: iOS 27 Device Hub. The current
+transport implementation is intentionally a fail-closed placeholder. It may
+become ready only after all of these pass on a physical device:
 
-It confirms why WebDriverAgent is not part of the launch product: the route is
-more deterministic for a test lab, but adds onboarding and does not provide the
-seamless locked-iPhone session Phone Use is designed around.
+1. receive fresh device frames while the iPhone is in the required state;
+2. send tap, swipe, keyboard, and system actions through device HID;
+3. verify each action with a later device frame;
+4. record the foreground Mac application throughout and observe no change;
+5. reconnect after app, Mac, and iPhone restarts;
+6. characterize USB and Apple-supported local wireless behavior;
+7. publish the exact supported Xcode, macOS, and iOS matrix.
 
-## Other relevant projects
-
-### Peekaboo
-
-A strong generic macOS capture and UI-automation toolkit. It is useful for
-window discovery and ScreenCaptureKit patterns, but it is not specifically a
-locked-iPhone transport and does not solve Mirroring's HID and protected-surface
-quirks by itself.
-
-### Understudy
-
-Demonstrates generic screenshot/GUI agent flows and mentions iPhone Mirroring.
-Its test harness does not establish a real locked-iPhone session, so it is
-weaker evidence than `mirroir-mcp`.
-
-### `serve-sim`
-
-Good inspiration for the browser experience and agent-facing control loop, but
-simulators expose supported developer APIs. A physical iPhone through
-Continuity requires the native Mac-window capture/input adapter described
-above.
-
-## Product conclusion
-
-The best agent experience is:
-
-1. one-time Apple iPhone Mirroring setup;
-2. one-time Screen Recording and Accessibility grants for a stably signed Mac
-   broker;
-3. background launch at login;
-4. authenticated local `open → observe → close` calls in the background, with
-   control available only when Mirroring is already frontmost;
-5. pixel/OCR/vision planning above the broker;
-6. a separate test-lab product, not a hidden fallback, when semantic iOS UI
-   data is required.
-
-It is seamless after consent, but it is not an iPhone Mirroring SDK and cannot
-operate a powered-off phone.
-
-## Transport decision
-
-| Route | Real locked phone | Smoothness | Setup | Launchable |
-| --- | --- | --- | --- | --- |
-| ScreenCaptureKit + foreground-only global HID | Yes | 12–30 fps | Apple pairing + two Mac grants | Observation yes; unattended control no |
-| `screencapture -l` + foreground-only global HID | Yes | 2–7 fps | Same | Capture fallback only |
-| H.264/WebRTC over SCK | Yes | 30 fps | More dependencies/protocol surface | Later |
-| Private ScreenSharingKit | Theoretically | Native | Apple-only entitlements/session state | No |
-| USB DVT + WebDriverAgent | Not the locked wireless route | 5–15 fps | Developer Mode, USB/tunnel, signing | Test lab |
-| `simctl` / `serve-sim` | Simulator only | Up to 60 fps | Xcode simulator | Different product |
+Internet access comes later as an authenticated relay to a trusted Mac host.
+It must not be confused with Device Hub’s local connection or implemented by
+exposing the loopback API directly.

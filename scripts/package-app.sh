@@ -69,8 +69,7 @@ PHONE_USE_EXPECTED_SIGNING_HASH="${IDENTITY/-/}" \
 print "Packaged ${APP_DIR}"
 print "CLI: ${CONTENTS_DIR}/Helpers/phone-use"
 if [[ "${IDENTITY}" == "-" ]]; then
-  print "WARNING: ad-hoc signed. Its code identity changes on every rebuild, so macOS privacy grants will not persist."
-  print "Use npm run package:dev before installing a build used with Screen Recording or Accessibility."
+  print "WARNING: ad-hoc signed. Use npm run package:dev for a stable development identity."
 else
   print "Signed with stable identity: ${IDENTITY_LABEL} (${IDENTITY})"
 fi

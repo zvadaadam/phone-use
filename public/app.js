@@ -2,154 +2,129 @@ const elements = {
   body: document.body,
   statusPill: document.querySelector("#status-pill"),
   statusLabel: document.querySelector("#status-label"),
-  fps: document.querySelector("#fps-value"),
-  size: document.querySelector("#size-value"),
-  bridgeDetail: document.querySelector("#bridge-detail"),
+  deviceTitle: document.querySelector("#device-title"),
+  frameLabel: document.querySelector("#frame-label"),
   emptyTitle: document.querySelector("#empty-title"),
   emptyCopy: document.querySelector("#empty-copy"),
-  stream: document.querySelector("#stream"),
-  restart: document.querySelector("#restart-button"),
-  close: document.querySelector("#close-session"),
-  log: document.querySelector("#event-log"),
+  proof: document.querySelector("#proof-label"),
+  ios: document.querySelector("#ios-label"),
+  hub: document.querySelector("#hub-label"),
+  transport: document.querySelector("#transport-value"),
+  connection: document.querySelector("#connection-value"),
+  developerMode: document.querySelector("#developer-mode-value"),
+  internet: document.querySelector("#internet-value"),
+  focus: document.querySelector("#focus-value"),
+  connect: document.querySelector("#connect-button"),
+  refresh: document.querySelector("#refresh-button"),
   clearLog: document.querySelector("#clear-log"),
-  latency: document.querySelector("#latency-label"),
+  log: document.querySelector("#event-log"),
 };
 
 let statusTimer;
-let authorizationReported = false;
 
-connect();
+elements.connect.addEventListener("click", () =>
+  runButton(elements.connect, async () => {
+    await post("/api/device/connect");
+    addLog("Device Hub connection requested");
+  }),
+);
+elements.refresh.addEventListener("click", () =>
+  runButton(elements.refresh, pollStatus),
+);
+elements.clearLog.addEventListener("click", () => elements.log.replaceChildren());
 
-elements.restart.addEventListener("click", async () => {
-  await runButtonAction(elements.restart, async () => {
-    await post("/api/session/open");
-    addLog("iPhone session opened");
-  });
-});
-
-elements.close.addEventListener("click", async () => {
-  await runButtonAction(elements.close, async () => {
-    await post("/api/session/close");
-    addLog("iPhone session closed");
-  });
-});
-
-elements.clearLog.addEventListener("click", () => {
-  elements.log.replaceChildren();
-});
-
-function connect() {
-  clearInterval(statusTimer);
-  pollStatus();
-  statusTimer = setInterval(pollStatus, 1_000);
-}
+pollStatus();
+statusTimer = setInterval(pollStatus, 1_000);
+window.addEventListener("pagehide", () => clearInterval(statusTimer));
 
 async function pollStatus() {
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
-    if (!response.ok) throw new Error(`Status ${response.status}`);
-    updateStatus(await response.json());
-    authorizationReported = false;
-    document.querySelector('[data-step="browser"]').dataset.ready = "true";
+    if (!response.ok) throw new Error("Status " + response.status);
+    render(await response.json());
   } catch (error) {
-    document.querySelector('[data-step="browser"]').dataset.ready = "false";
-    if (!authorizationReported) {
-      addLog(
-        error.message === "Status 401"
-          ? "Open this dashboard from the Phone Use menu or CLI"
-          : `Bridge status unavailable: ${error.message}`,
-      );
-      authorizationReported = true;
-    }
+    elements.body.dataset.live = "false";
+    elements.statusPill.dataset.status = "unavailable";
+    elements.statusLabel.textContent = "API unavailable";
+    addLog(
+      error.message === "Status 401"
+        ? "Open this dashboard from the Phone Use menu or CLI"
+        : "Agent API unavailable: " + error.message,
+    );
   }
 }
 
-async function post(path, value) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: value ? { "Content-Type": "application/json" } : {},
-    body: value ? JSON.stringify(value) : undefined,
-  });
+async function post(path) {
+  const response = await fetch(path, { method: "POST" });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || `Request ${response.status}`);
+  if (!response.ok) throw new Error(payload.error || "Request " + response.status);
   return payload;
 }
 
-async function runButtonAction(button, action) {
+async function runButton(button, action) {
   button.disabled = true;
   try {
     await action();
   } catch (error) {
-    addLog(`Bridge error: ${error.message}`);
+    addLog(error.message);
   } finally {
     button.disabled = false;
+    await pollStatus();
   }
 }
 
-function updateStatus(status) {
-  const live = status.phase === "streaming" && status.fps > 0;
-  elements.body.dataset.live = String(live);
+function render(status) {
+  const connected = status.phase === "streaming";
+  elements.body.dataset.live = String(connected);
   elements.statusPill.dataset.status = status.phase;
-  elements.statusLabel.textContent = friendlyPhase(status.phase);
-  elements.fps.textContent = `${status.fps || 0} fps`;
-  elements.size.textContent = status.width && status.height
-    ? `${status.width}×${status.height}`
-    : "—";
-  const captureMode = {
-    screenCaptureKit: "ScreenCaptureKit",
-    screenshotFallback: "Screenshot fallback",
-  }[status.captureMode];
-  elements.bridgeDetail.textContent = [status.message || "Waiting", captureMode]
-    .filter(Boolean)
-    .join(" · ");
-  elements.latency.textContent =
-    live && Number.isFinite(status.frameAgeMs)
-      ? `${status.frameAgeMs} ms frame age`
-      : "awaiting frames";
+  elements.statusLabel.textContent = phaseLabel(status.phase);
+  elements.deviceTitle.textContent = connected ? "Live device" : "Awaiting backend";
+  elements.frameLabel.textContent = status.frame
+    ? status.frame.width + "×" + status.frame.height + " · " + status.frame.fps + " fps"
+    : "no frame";
+  elements.proof.textContent = status.proof;
+  elements.ios.textContent = "iOS " + status.requirements.minimumIOSVersion + "+";
+  elements.hub.textContent = status.message;
+  elements.transport.textContent = status.transport;
+  elements.connection.textContent = status.requirements.hostConnection;
+  elements.developerMode.textContent = status.requirements.developerModeRequired
+    ? "required"
+    : "not required";
+  elements.internet.textContent = status.internetRelayAvailable ? "available" : "not built";
+  elements.focus.textContent = status.macFocusPolicy;
+  elements.emptyTitle.textContent =
+    status.proof === "validated" ? "Waiting for an iPhone" : "Physical proof required";
+  elements.emptyCopy.textContent = status.message;
+  elements.connect.disabled = status.proof !== "validated";
+  renderLogs(status.logs || []);
+}
 
-  document.querySelector('[data-step="phone"]').dataset.ready = String(live);
-  document.querySelector('[data-step="continuity"]').dataset.ready = String(live);
-  document.querySelector('[data-step="bridge"]').dataset.ready = String(live);
-
-  if (!live) {
-    elements.emptyTitle.textContent = titleForPhase(status.phase);
-    elements.emptyCopy.textContent =
-      status.message || "Keep the iPhone nearby, powered on, and locked.";
+function renderLogs(logs) {
+  elements.log.replaceChildren();
+  if (!logs.length) {
+    addLog("No events yet");
+    return;
   }
+  for (const entry of logs.slice().reverse()) addLog(entry);
 }
 
 function addLog(message) {
-  const line = document.createElement("p");
+  const row = document.createElement("p");
   const time = document.createElement("time");
-  const text = document.createElement("span");
-  time.textContent = new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  text.textContent = message;
-  line.append(time, text);
-  elements.log.prepend(line);
-  while (elements.log.children.length > 30) elements.log.lastElementChild.remove();
+  const copy = document.createElement("span");
+  time.textContent = new Date().toLocaleTimeString([], { hour12: false });
+  copy.textContent = message;
+  row.append(time, copy);
+  elements.log.prepend(row);
+  while (elements.log.children.length > 20) elements.log.lastElementChild.remove();
 }
 
-function friendlyPhase(phase) {
+function phaseLabel(phase) {
   return {
-    starting: "Starting",
-    waiting: "Waiting",
-    streaming: "Live",
-    reconnecting: "Reconnecting",
-    permission: "Permission",
-    error: "Error",
+    unavailable: "Unavailable",
+    waitingForDevice: "Waiting for iPhone",
+    connecting: "Connecting",
+    streaming: "Connected",
     stopped: "Stopped",
   }[phase] || phase;
-}
-
-function titleForPhase(phase) {
-  return {
-    permission: "Permission required",
-    reconnecting: "Reconnecting to iPhone Mirroring",
-    error: "Bridge error",
-    stopped: "Bridge stopped",
-  }[phase] || "Waiting for iPhone Mirroring";
 }

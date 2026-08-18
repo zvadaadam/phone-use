@@ -64,7 +64,7 @@ cask "phone-use" do
 
   url "${CASK_URL}"
   name "Phone Use"
-  desc "Local agent bridge for Apple iPhone Mirroring"
+  desc "Local agent API for direct iOS physical-device control"
   homepage "https://github.com/zvadaadam/homebrew-tap"
 
   depends_on arch: :arm64
@@ -73,12 +73,11 @@ cask "phone-use" do
   app "Phone Use.app"
   binary "#{appdir}/Phone Use.app/Contents/Helpers/phone-use", target: "phone-use"
 
-  uninstall quit: "com.adamzvada.mirrorrelay"
+  uninstall quit: "com.adamzvada.phoneuse"
 
   zap trash: [
-    "~/Library/Application Support/Mirror Relay",
     "~/Library/Application Support/Phone Use",
-    "~/Library/Preferences/com.adamzvada.mirrorrelay.plist",
+    "~/Library/Preferences/com.adamzvada.phoneuse.plist",
   ]
 end
 EOF

@@ -26,32 +26,19 @@ if lsof -nP -iTCP:"${API_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 swift build --package-path "${PROJECT_DIR}/native" >/dev/null
-
-PHONE_USE_PORT="${API_PORT}" \
-PHONE_USE_PUBLIC_DIR="${PROJECT_DIR}/public" \
-  "${PROJECT_DIR}/native/.build/debug/phone-use-app" \
-  >"${TEMP_DIR}/broker.log" 2>&1 &
+env PHONE_USE_PORT="${API_PORT}" PHONE_USE_PUBLIC_DIR="${PROJECT_DIR}/public" "${PROJECT_DIR}/native/.build/debug/phone-use-app" >"${TEMP_DIR}/broker.log" 2>&1 &
 BROKER_PID=$!
 
 for _ in {1..100}; do
-  if curl -sS "${BASE_URL}/" >/dev/null 2>&1; then
-    break
-  fi
+  curl -sS "${BASE_URL}/" >/dev/null 2>&1 && break
   sleep 0.05
 done
-
 if ! curl -sS "${BASE_URL}/" >/dev/null 2>&1; then
   print -u2 "FAIL: broker did not start"
   exit 1
 fi
-if [[ ! -f "${TOKEN_FILE}" ]]; then
-  print -u2 "FAIL: broker did not create its local token"
-  exit 1
-fi
-if [[ "$(stat -f '%Lp' "${TOKEN_FILE}")" != "600" ]]; then
-  print -u2 "FAIL: local token permissions are not 0600"
-  exit 1
-fi
+[[ -f "${TOKEN_FILE}" ]] || { print -u2 "FAIL: broker did not create token"; exit 1; }
+[[ "$(stat -f '%Lp' "${TOKEN_FILE}")" == "600" ]] || { print -u2 "FAIL: token permissions are not 0600"; exit 1; }
 
 TOKEN=$(<"${TOKEN_FILE}")
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
@@ -61,10 +48,7 @@ assert_code() {
   shift
   local actual
   actual=$(curl -sS -o /dev/null -w '%{http_code}' "$@")
-  if [[ "${actual}" != "${expected}" ]]; then
-    print -u2 "FAIL: expected HTTP ${expected}, received ${actual}"
-    exit 1
-  fi
+  [[ "${actual}" == "${expected}" ]] || { print -u2 "FAIL: expected HTTP ${expected}, received ${actual}"; exit 1; }
 }
 
 assert_code 401 "${BASE_URL}/health"
@@ -74,56 +58,57 @@ assert_code 200 -H "${AUTH_HEADER}" "${BASE_URL}/"
 assert_code 403 -H "Host: rebinding.attacker.example" "${BASE_URL}/"
 assert_code 401 "${BASE_URL}/api/status"
 assert_code 401 "${BASE_URL}/api/status?token=${TOKEN}"
+assert_code 401 "${BASE_URL}/auth/dashboard?bootstrap=first&bootstrap=second"
 assert_code 200 -H "${AUTH_HEADER}" "${BASE_URL}/api/status"
+
 status_json=$(curl -fsS -H "${AUTH_HEADER}" "${BASE_URL}/api/status")
 STATUS_JSON="${status_json}" node -e '
-  const value = JSON.parse(process.env.STATUS_JSON);
-  if (value.product !== "phone-use") throw new Error("unexpected product identifier");
-  if (value.protocolVersion !== 1) throw new Error("unexpected protocol version");
-  if (typeof value.version !== "string") throw new Error("missing product version");
+  const status = JSON.parse(process.env.STATUS_JSON);
+  if (status.product !== "phone-use") throw new Error("unexpected product");
+  if (status.protocolVersion !== 4) throw new Error("unexpected protocol version");
+  if (status.transport !== "ios27-device-hub") throw new Error("unexpected transport");
+  if (status.phase !== "unavailable") throw new Error("backend must fail closed");
+  if (status.proof !== "unimplemented") throw new Error("proof state is dishonest");
+  if (status.requirements?.minimumIOSVersion !== "27.0") {
+    throw new Error("missing iOS 27 requirement");
+  }
+  if (status.internetRelayAvailable !== false) {
+    throw new Error("internet relay must not be claimed");
+  }
+  for (const name of ["pointer", "keyboard", "shortcuts"]) {
+    if (status.controlCapabilities?.[name] !== false) {
+      throw new Error(name + " must remain disabled");
+    }
+  }
+  const expected = [
+    "controlCapabilities", "internetRelayAvailable", "logs",
+    "macFocusPolicy", "message", "phase", "product", "proof",
+    "protocolVersion", "requirements", "transport", "version",
+  ];
+  if (Object.keys(status).sort().join() !== expected.sort().join()) {
+    throw new Error("status contract contains unexpected fields");
+  }
 '
-assert_code 403 \
-  -H "Host: rebinding.attacker.example" \
-  -H "${AUTH_HEADER}" \
-  "${BASE_URL}/api/status"
 
-bootstrap_json=$(curl -fsS \
-  -X POST \
-  -H "${AUTH_HEADER}" \
-  "${BASE_URL}/api/dashboard/bootstrap")
+assert_code 503 -H "${AUTH_HEADER}" "${BASE_URL}/api/observe"
+assert_code 409 -X POST -H "${AUTH_HEADER}" "${BASE_URL}/api/device/connect"
+assert_code 200 -X POST -H "${AUTH_HEADER}" "${BASE_URL}/api/device/disconnect"
+assert_code 400 -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" --data '{"type":"tap","x":2,"y":0.5}' "${BASE_URL}/api/actions"
+assert_code 409 -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" --data '{"type":"tap","x":0.5,"y":0.5,"expectedFrameToken":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' "${BASE_URL}/api/actions"
+
+bootstrap_json=$(curl -fsS -X POST -H "${AUTH_HEADER}" "${BASE_URL}/api/dashboard/bootstrap")
 bootstrap_path=$(BOOTSTRAP_JSON="${bootstrap_json}" node -e '
   const value = JSON.parse(process.env.BOOTSTRAP_JSON);
   if (typeof value.path !== "string") process.exit(1);
   process.stdout.write(value.path);
 ')
-
-assert_code 303 \
-  -D "${TEMP_DIR}/bootstrap.headers" \
-  -c "${TEMP_DIR}/cookies.txt" \
-  "${BASE_URL}${bootstrap_path}"
-if ! rg -qi '^Set-Cookie: PhoneUseSession=.*HttpOnly; SameSite=Strict;' \
-  "${TEMP_DIR}/bootstrap.headers"; then
-  print -u2 "FAIL: dashboard session cookie is not hardened"
-  exit 1
-fi
+assert_code 303 -D "${TEMP_DIR}/bootstrap.headers" -c "${TEMP_DIR}/cookies.txt" "${BASE_URL}${bootstrap_path}"
+rg -qi '^Set-Cookie: PhoneUseSession=.*HttpOnly; SameSite=Strict;' "${TEMP_DIR}/bootstrap.headers" || { print -u2 "FAIL: dashboard cookie is not hardened"; exit 1; }
 assert_code 401 "${BASE_URL}${bootstrap_path}"
 assert_code 200 -b "${TEMP_DIR}/cookies.txt" "${BASE_URL}/api/status"
-assert_code 403 \
-  -X POST \
-  -b "${TEMP_DIR}/cookies.txt" \
-  -H "Origin: https://attacker.example" \
-  "${BASE_URL}/api/session/close"
-assert_code 400 \
-  -X POST \
-  -H "${AUTH_HEADER}" \
-  -H "Content-Type: application/json" \
-  --data '{"type":"tap","x":2,"y":0.5}' \
-  "${BASE_URL}/api/act"
+assert_code 403 -X POST -b "${TEMP_DIR}/cookies.txt" -H "Origin: https://attacker.example" "${BASE_URL}/api/device/disconnect"
 
 listener=$(lsof -nP -iTCP:"${API_PORT}" -sTCP:LISTEN | tail -n +2)
-if [[ "${listener}" != *"127.0.0.1:${API_PORT}"* ]]; then
-  print -u2 "FAIL: broker is not restricted to IPv4 loopback"
-  exit 1
-fi
+[[ "${listener}" == *"127.0.0.1:${API_PORT}"* ]] || { print -u2 "FAIL: broker is not restricted to IPv4 loopback"; exit 1; }
 
-print "PASS: authenticated loopback API, host/origin checks, one-time sessions, and validation"
+print "PASS: Device Hub-only API is authenticated, explicit, and fail-closed"
